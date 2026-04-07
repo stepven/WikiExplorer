@@ -1,0 +1,826 @@
+:root {
+  --hud-bg: rgba(255, 255, 255, 0.88);
+  --hud-border: rgba(0, 0, 0, 0.08);
+  --text: #12131a;
+  --app-muted: #5c6370;
+  --app-accent: #5b4fc9;
+  --app-accent-dim: rgba(91, 79, 201, 0.12);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    sans-serif;
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #ffffff;
+  color: var(--text);
+}
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+#webgl {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: default;
+  outline: none;
+}
+
+.hud {
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  max-width: min(22rem, calc(100% - 2rem));
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+
+.hud__title {
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.hud__hint {
+  margin: 0 0 0.85rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--app-muted);
+}
+
+.hud__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.preset {
+  appearance: none;
+  border: 1px solid var(--hud-border);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.78rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.preset:hover {
+  border-color: rgba(167, 139, 250, 0.45);
+  background: var(--app-accent-dim);
+}
+
+.preset:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.preset.is-active {
+  border-color: rgba(167, 139, 250, 0.65);
+  background: var(--app-accent-dim);
+  color: #f5f3ff;
+}
+
+#dialkit-stack {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 999;
+  max-width: min(22rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+  overflow: hidden auto;
+  pointer-events: auto;
+}
+
+/* Hide the older panels; only the visual panel is shown */
+#dialkit-root,
+#image-dialkit-root,
+#focus-dialkit-root {
+  display: none;
+}
+
+.dialkit-stack .dialkit {
+  flex: 0 0 auto;
+  max-height: min(46dvh, 22rem);
+}
+
+.dialkit {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: 100%;
+  border-radius: 12px;
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.08);
+}
+
+.dialkit__toggle {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.5rem;
+  padding: 0.65rem 0.85rem;
+  margin: 0;
+  border: none;
+  border-radius: 12px 12px 0 0;
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.dialkit__toggle:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.dialkit__toggle:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.dialkit__chev {
+  font-size: 0.65rem;
+  opacity: 0.7;
+}
+
+.dialkit__panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0.5rem 0.75rem 0.75rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border-top: 1px solid var(--hud-border);
+}
+
+.dialkit__panel[hidden] {
+  display: none;
+}
+
+.dialkit__section {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--app-muted);
+  margin: 0.65rem 0 0.35rem;
+}
+
+.dialkit__copyBar {
+  width: 100%;
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--hud-border);
+}
+
+.dialkit__copyBar .dialkit__copy {
+  width: 100%;
+  flex: none;
+}
+
+.dialkit__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 12rem);
+  gap: 0.35rem 0.5rem;
+  align-items: center;
+  margin-bottom: 0.45rem;
+  font-size: 0.78rem;
+}
+
+.dialkit__label {
+  min-width: 0;
+  color: var(--text);
+  line-height: 1.25;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+.dialkit__ctrl {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  max-width: 12rem;
+  justify-self: end;
+}
+
+.dialkit__ctrl input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--app-accent);
+}
+
+.dialkit__ctrl input[type='checkbox'] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--app-accent);
+  flex-shrink: 0;
+}
+
+.dialkit__value {
+  flex-shrink: 0;
+  min-width: 3.25rem;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  color: var(--app-muted);
+  text-align: right;
+}
+
+.dialkit__value--muted {
+  opacity: 0.35;
+}
+
+.dialkit__select {
+  flex: 1;
+  min-width: 0;
+  max-width: 12rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 8px;
+  border: 1px solid var(--hud-border);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.72rem;
+  accent-color: var(--app-accent);
+  cursor: pointer;
+}
+
+.dialkit__select:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.dialkit__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+
+.dialkit__copy,
+.dialkit__reset {
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--hud-border);
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.dialkit__actions .dialkit__reset {
+  width: 100%;
+}
+
+.dialkit__copy:hover,
+.dialkit__reset:hover {
+  border-color: rgba(167, 139, 250, 0.45);
+  background: var(--app-accent-dim);
+}
+
+.dialkit__copy:focus-visible,
+.dialkit__reset:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.dialkit__row--tipped {
+  cursor: help;
+}
+
+.dialkit__info {
+  display: inline-block;
+  margin-left: 0.1rem;
+  font-size: 0.65rem;
+  line-height: 1;
+  opacity: 0.55;
+  cursor: help;
+  vertical-align: 0.05em;
+}
+
+/* ── Loading indicator ───────────────────────────────────── */
+
+.loading-indicator {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.loading-indicator__title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.loading-indicator__status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.4rem 0 0;
+  font-size: 0.88rem;
+  font-weight: 400;
+  color: var(--app-muted);
+}
+
+.loading-indicator__spinner {
+  animation: spin 1.5s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Topic filter mount ──────────────────────────────────── */
+
+#topic-filter-root {
+  position: fixed;
+  top: 1.25rem;
+  left: 1.25rem;
+  z-index: 45;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+
+#topic-filter-root.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Bottom hint stack (filter status + scroll hint) ──────── */
+
+.bottom-hint-stack {
+  position: fixed;
+  bottom: 2rem;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.filter-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 450;
+  color: #777;
+  letter-spacing: 0.01em;
+}
+
+.filter-loading[hidden] {
+  display: none;
+}
+
+.filter-loading__spinner {
+  flex-shrink: 0;
+  color: #888;
+  animation: filter-loading-spin 0.85s linear infinite;
+}
+
+@keyframes filter-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.filter-loading__label {
+  white-space: nowrap;
+}
+
+/* ── Scroll hint ─────────────────────────────────────────── */
+
+.scroll-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 400;
+  color: #999;
+  opacity: 1;
+  transition: opacity 0.25s ease;
+}
+
+.scroll-hint--pending {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.scroll-hint--hidden {
+  opacity: 0;
+}
+
+/* ── Wiki detail overlay ─────────────────────────────────── */
+
+.wiki-detail {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 1.5rem 1.5rem calc(1.5rem + 64px) 1.5rem;
+  pointer-events: auto;
+}
+
+.wiki-detail[hidden] {
+  display: none;
+}
+
+
+.wiki-detail__card {
+  position: relative;
+  min-width: 640px;
+  width: 640px;
+  max-width: 640px;
+  padding: 1.5rem 0 1.25rem;
+  border-radius: 4px;
+  font-family: system-ui, -apple-system, sans-serif;
+  opacity: 1;
+  animation: wiki-detail-in 0.25s ease-out;
+}
+
+@keyframes wiki-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.wiki-detail__close {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  z-index: 1;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease;
+}
+
+.wiki-detail__close-icon {
+  display: flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.wiki-detail__close-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.wiki-detail__close:hover {
+  color: var(--app-muted);
+}
+
+.wiki-detail__close:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.wiki-detail__title {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  padding-right: 2rem;
+  line-height: 1.3;
+}
+
+.wiki-detail__extract {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--app-muted);
+}
+
+.wiki-detail__link {
+  /* inline-block keeps label + arrow in normal inline text flow (same as one “Read on Wikipedia →” line),
+     unlike inline-flex which treats text and arrow as separate flex items and shifts the arrow. */
+  display: inline-block;
+  width: 188px;
+  height: 32px;
+  padding: 0;
+  color: #0f0f0f;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 32px;
+  letter-spacing: 0em;
+  text-decoration: none;
+  opacity: 1;
+  transition: color 0.2s;
+}
+
+.wiki-detail__link:hover {
+  color: #555555;
+}
+
+.wiki-detail__link-arrow {
+  display: inline-block;
+  vertical-align: baseline;
+  transform: translateX(0);
+  transition: transform 0.12s ease;
+}
+
+.wiki-detail__link:hover .wiki-detail__link-arrow,
+.wiki-detail__link:focus-visible .wiki-detail__link-arrow {
+  transform: translateX(6px);
+}
+
+.wiki-detail__link:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+/* ── Image history tray ─────────────────────────────────── */
+
+.history-tray {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 1.5rem;
+  width: 120px;
+  height: 120px;
+  z-index: 60;
+  border-radius: 16px;
+  overflow: visible;
+}
+
+.history-tray[hidden] {
+  display: none;
+}
+
+.history-tray__stack {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border-radius: 16px;
+  overflow: visible;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.65);
+  border: none;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.1),
+    0 0px 12px rgba(0, 0, 0, 0.08),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.history-tray__thumb {
+  position: absolute;
+  width: 64px;
+  height: 52px;
+  left: 50%;
+  top: 50%;
+  margin-left: -32px;
+  margin-top: -26px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+  transform-origin: center center;
+}
+
+.history-tray__badge {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ── Fullscreen overlay ─────────────────────────────────── */
+
+.history-tray__fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 48;
+  /* visible so tilted 3D orbit is not clipped at the edges */
+  overflow: visible;
+  perspective: min(1400px, 120vw);
+  perspective-origin: 50% 50%;
+}
+
+.history-tray__fullscreen[hidden] {
+  display: none;
+}
+
+.history-tray__fs-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(240, 240, 240, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.history-tray__fs-close {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  z-index: 4;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease;
+}
+
+.history-tray__fs-close-icon {
+  display: flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.history-tray__fs-close-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.history-tray__fs-close:hover {
+  color: var(--app-muted);
+}
+
+.history-tray__fs-close:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.history-tray__orbit {
+  --orbit-tilt-x: 70deg;
+  --orbit-tilt-z: 90deg;
+  --orbit-img-max: 220px;
+  --orbit-offset-y: -100px;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  transform-style: preserve-3d;
+  transform-origin: center center;
+  transform: translateY(var(--orbit-offset-y)) rotateX(var(--orbit-tilt-x)) rotateZ(var(--orbit-tilt-z));
+  pointer-events: none;
+}
+
+.history-tray__orbit-item {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  will-change: transform;
+  transform-style: preserve-3d;
+}
+
+/* Undo the orbit stage rotation so thumbnails stay upright; only the path is tilted */
+.history-tray__orbit-item-inner {
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.2s ease;
+  transform: rotateZ(calc(-1 * var(--orbit-tilt-z)))
+    rotateX(calc(-1 * var(--orbit-tilt-x)));
+  transform-style: preserve-3d;
+}
+
+.history-tray__orbit-item-inner img {
+  display: block;
+  max-width: min(var(--orbit-img-max), 28vmin);
+  max-height: min(var(--orbit-img-max), 28vmin);
+  width: auto;
+  height: auto;
+}
+
+/* Caption bar — flat overlay outside the 3D orbit so text is crisp and links are clickable */
+.history-tray__caption-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 1.5rem 1rem 2rem;
+  pointer-events: none;
+  animation: caption-bar-in 0.3s ease-out both;
+}
+
+.history-tray__caption-bar[hidden] {
+  display: none;
+}
+
+@keyframes caption-bar-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.history-tray__caption-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.history-tray__caption-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.history-tray__caption-bar .wiki-detail__link {
+  pointer-events: auto;
+  width: auto;
+}
