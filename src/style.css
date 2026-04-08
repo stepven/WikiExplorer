@@ -569,6 +569,13 @@ body {
   font-weight: 300;
   line-height: 1.55;
   color: var(--app-muted);
+  /* Cap height so long summaries never grow into the focused image above */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .wiki-detail__link {
