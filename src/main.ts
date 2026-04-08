@@ -342,7 +342,7 @@ const filterLoadingEl = document.getElementById('filter-loading')!
 const detailPanel = createDetailPanel({ onClose: beginFocusExit })
 app.appendChild(detailPanel.el)
 
-const historyTray = createHistoryTray()
+const historyTray = createHistoryTray(app)
 app.appendChild(historyTray.el)
 
 function focusMeshOnScreen(mesh: THREE.Mesh, onSettled?: () => void) {

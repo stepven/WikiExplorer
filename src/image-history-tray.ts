@@ -45,7 +45,7 @@ function getOrbitRadius(n: number): number {
 /** Angle on the ring where the focused item should sit (top of circle, “spotlight”). */
 const SPOTLIGHT_ANGLE = 0
 
-export function createHistoryTray(): {
+export function createHistoryTray(portalRoot: HTMLElement): {
   push: (article: WikiArticle) => void
   el: HTMLDivElement
 } {
@@ -88,7 +88,9 @@ export function createHistoryTray(): {
 
   const fsBackdrop = document.createElement('div')
   fsBackdrop.className = 'history-tray__fs-backdrop'
-  fullscreen.appendChild(fsBackdrop)
+  fsBackdrop.hidden = true
+  /** Appended to #app (not under .history-tray) so backdrop-filter can sample the WebGL canvas. */
+  portalRoot.appendChild(fsBackdrop)
 
   /** Sits above the frosted backdrop; opacity is animated here so parent opacity does not break backdrop-filter. */
   const fsContent = document.createElement('div')
@@ -342,6 +344,7 @@ export function createHistoryTray(): {
     if (expanded || entries.length === 0) return
     expanded = true
     rebuildOrbit()
+    fsBackdrop.hidden = false
     fullscreen.hidden = false
     recomputeOrbitLayout()
     applyOrbitPositions()
@@ -359,6 +362,7 @@ export function createHistoryTray(): {
       ease: 'power2.in',
       onComplete: () => {
         fullscreen.hidden = true
+        fsBackdrop.hidden = true
         expanded = false
       },
     })
