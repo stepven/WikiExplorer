@@ -90,16 +90,20 @@ export function createHistoryTray(): {
   fsBackdrop.className = 'history-tray__fs-backdrop'
   fullscreen.appendChild(fsBackdrop)
 
+  /** Sits above the frosted backdrop; opacity is animated here so parent opacity does not break backdrop-filter. */
+  const fsContent = document.createElement('div')
+  fsContent.className = 'history-tray__fs-content'
+
   const fsClose = document.createElement('button')
   fsClose.type = 'button'
   fsClose.className = 'history-tray__fs-close'
   fsClose.setAttribute('aria-label', 'Close')
   fsClose.innerHTML = `<span class="history-tray__fs-close-icon" aria-hidden="true">${xIconSvg}</span>`
-  fullscreen.appendChild(fsClose)
+  fsContent.appendChild(fsClose)
 
   const orbitStage = document.createElement('div')
   orbitStage.className = 'history-tray__orbit'
-  fullscreen.appendChild(orbitStage)
+  fsContent.appendChild(orbitStage)
 
   const captionBar = document.createElement('div')
   captionBar.className = 'history-tray__caption-bar'
@@ -116,7 +120,9 @@ export function createHistoryTray(): {
   captionInner.appendChild(captionTitle)
   captionInner.appendChild(captionLink)
   captionBar.appendChild(captionInner)
-  fullscreen.appendChild(captionBar)
+  fsContent.appendChild(captionBar)
+
+  fullscreen.appendChild(fsContent)
 
   el.appendChild(fullscreen)
 
@@ -335,14 +341,14 @@ export function createHistoryTray(): {
     recomputeOrbitLayout()
     applyOrbitPositions()
     startOrbit()
-    gsap.fromTo(fullscreen, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power2.out' })
+    gsap.fromTo(fsContent, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power2.out' })
   }
 
   function collapse() {
     if (!expanded) return
     hideDetail()
     stopOrbit()
-    gsap.to(fullscreen, {
+    gsap.to(fsContent, {
       opacity: 0,
       duration: 0.2,
       ease: 'power2.in',

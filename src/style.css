@@ -699,9 +699,19 @@ body {
 .history-tray__fs-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(240, 240, 240, 0.88);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  z-index: 1;
+  /* Stronger tint + blur (matches frosted look; avoid animating opacity on a parent of this node — breaks backdrop-filter in some builds). */
+  background: rgba(242, 242, 242, 0.94);
+  backdrop-filter: blur(44px) saturate(1.12);
+  -webkit-backdrop-filter: blur(44px) saturate(1.12);
+}
+
+/* Fullscreen layer above the frosted backdrop; opacity is animated here only. */
+.history-tray__fs-content {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
 }
 
 .history-tray__fs-close {
@@ -709,6 +719,7 @@ body {
   top: 1.25rem;
   right: 1.25rem;
   z-index: 4;
+  pointer-events: auto;
   width: 48px;
   height: 48px;
   padding: 0;
