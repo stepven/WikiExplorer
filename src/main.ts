@@ -58,6 +58,8 @@ const renderer = new THREE.WebGLRenderer({
   antialias: true,
   alpha: false,
   powerPreference: 'high-performance',
+  /** Lets drawImage(webgl→2d) read the last frame reliably (history tray frosted snapshot). */
+  preserveDrawingBuffer: true,
 })
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -807,6 +809,14 @@ function tick() {
     scene.background = sceneBg
     renderer.render(scene, camera)
   }
+
+  if (historyTray.getExpanded()) {
+    const snap = historyTray.backdropSnapCanvas
+    const ctx = snap.getContext('2d', { alpha: false })
+    if (ctx) {
+      ctx.drawImage(canvas, 0, 0, snap.width, snap.height)
+    }
+  }
 }
 
 gsap.ticker.add(tick)
@@ -819,6 +829,7 @@ function resize() {
   camera.aspect = w / h
   camera.updateProjectionMatrix()
   renderer.setSize(w, h, false)
+  historyTray.resizeBackdropSnap()
 }
 resize()
 window.addEventListener('resize', resize)

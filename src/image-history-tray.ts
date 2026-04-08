@@ -48,6 +48,9 @@ const SPOTLIGHT_ANGLE = 0
 export function createHistoryTray(portalRoot: HTMLElement): {
   push: (article: WikiArticle) => void
   el: HTMLDivElement
+  getExpanded: () => boolean
+  backdropSnapCanvas: HTMLCanvasElement
+  resizeBackdropSnap: () => void
 } {
   const entries: WikiArticle[] = []
   let expanded = false
@@ -89,8 +92,26 @@ export function createHistoryTray(portalRoot: HTMLElement): {
   const fsBackdrop = document.createElement('div')
   fsBackdrop.className = 'history-tray__fs-backdrop'
   fsBackdrop.hidden = true
-  /** Appended to #app (not under .history-tray) so backdrop-filter can sample the WebGL canvas. */
+  /** Appended to #app (not under .history-tray). Blur = snapshot canvas + CSS filter (see main.ts). */
   portalRoot.appendChild(fsBackdrop)
+
+  const fsBackdropSnap = document.createElement('canvas')
+  fsBackdropSnap.className = 'history-tray__fs-backdrop-snap'
+  fsBackdropSnap.setAttribute('aria-hidden', 'true')
+
+  const fsBackdropTint = document.createElement('div')
+  fsBackdropTint.className = 'history-tray__fs-backdrop-tint'
+  fsBackdrop.appendChild(fsBackdropSnap)
+  fsBackdrop.appendChild(fsBackdropTint)
+
+  function resizeBackdropSnap() {
+    const scale = 0.42
+    const w = Math.max(160, Math.floor(window.innerWidth * scale))
+    const h = Math.max(90, Math.floor(window.innerHeight * scale))
+    fsBackdropSnap.width = w
+    fsBackdropSnap.height = h
+  }
+  resizeBackdropSnap()
 
   /** Sits above the frosted backdrop; opacity is animated here so parent opacity does not break backdrop-filter. */
   const fsContent = document.createElement('div')
@@ -380,7 +401,7 @@ export function createHistoryTray(portalRoot: HTMLElement): {
     collapse()
   })
 
-  fsBackdrop.addEventListener('click', () => {
+  fsBackdropTint.addEventListener('click', () => {
     if (detailOpen) {
       hideDetail()
       return
@@ -409,6 +430,7 @@ export function createHistoryTray(portalRoot: HTMLElement): {
 
   window.addEventListener('resize', () => {
     syncDialStyles()
+    resizeBackdropSnap()
   })
 
   /* ── Public API ────────────────────────────────────────── */
@@ -446,5 +468,11 @@ export function createHistoryTray(portalRoot: HTMLElement): {
     }
   }
 
-  return { push, el }
+  return {
+    push,
+    el,
+    getExpanded: () => expanded,
+    backdropSnapCanvas: fsBackdropSnap,
+    resizeBackdropSnap,
+  }
 }
