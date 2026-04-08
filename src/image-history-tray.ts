@@ -152,7 +152,8 @@ export function createHistoryTray(portalRoot: HTMLElement): {
 
   fullscreen.appendChild(fsContent)
 
-  el.appendChild(fullscreen)
+  /** Sibling of .history-tray under #app so z-index can place blur (59) above the mini-stack (58) but below this layer (61). */
+  portalRoot.appendChild(fullscreen)
 
   function recomputeOrbitLayout() {
     orbitRadius = getOrbitRadius(entries.length)
@@ -364,6 +365,7 @@ export function createHistoryTray(portalRoot: HTMLElement): {
   function expand() {
     if (expanded || entries.length === 0) return
     expanded = true
+    el.classList.add('history-tray--expanded')
     rebuildOrbit()
     fsBackdrop.hidden = false
     fullscreen.hidden = false
@@ -384,6 +386,7 @@ export function createHistoryTray(portalRoot: HTMLElement): {
       onComplete: () => {
         fullscreen.hidden = true
         fsBackdrop.hidden = true
+        el.classList.remove('history-tray--expanded')
         expanded = false
       },
     })

@@ -630,6 +630,11 @@ body {
   overflow: visible;
 }
 
+/* Mini-stack sits under the portaled frosted layer (z-index 59) while expanded */
+.history-tray.history-tray--expanded {
+  z-index: 58;
+}
+
 .history-tray[hidden] {
   display: none;
 }
@@ -685,7 +690,7 @@ body {
 .history-tray__fullscreen {
   position: fixed;
   inset: 0;
-  z-index: 48;
+  z-index: 61;
   /* visible so tilted 3D orbit is not clipped at the edges */
   overflow: visible;
   /* perspective is on .history-tray__orbit-perspective only — a perspective ancestor breaks backdrop-filter + WebGL */
