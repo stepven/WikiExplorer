@@ -101,9 +101,14 @@ export function createHistoryTray(): {
   fsClose.innerHTML = `<span class="history-tray__fs-close-icon" aria-hidden="true">${xIconSvg}</span>`
   fsContent.appendChild(fsClose)
 
+  /** Perspective lives here only — not on the fullscreen root — so backdrop-filter can sample the canvas behind the overlay. */
+  const orbitPerspective = document.createElement('div')
+  orbitPerspective.className = 'history-tray__orbit-perspective'
+  fsContent.appendChild(orbitPerspective)
+
   const orbitStage = document.createElement('div')
   orbitStage.className = 'history-tray__orbit'
-  fsContent.appendChild(orbitStage)
+  orbitPerspective.appendChild(orbitStage)
 
   const captionBar = document.createElement('div')
   captionBar.className = 'history-tray__caption-bar'

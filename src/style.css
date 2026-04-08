@@ -688,8 +688,7 @@ body {
   z-index: 48;
   /* visible so tilted 3D orbit is not clipped at the edges */
   overflow: visible;
-  perspective: min(1400px, 120vw);
-  perspective-origin: 50% 50%;
+  /* perspective is on .history-tray__orbit-perspective only — a perspective ancestor breaks backdrop-filter + WebGL */
 }
 
 .history-tray__fullscreen[hidden] {
@@ -756,6 +755,15 @@ body {
 .history-tray__fs-close:focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: 2px;
+}
+
+.history-tray__orbit-perspective {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  perspective: min(1400px, 120vw);
+  perspective-origin: 50% 50%;
+  pointer-events: none;
 }
 
 .history-tray__orbit {
