@@ -38,7 +38,7 @@ const SHARED_PROPS: Record<string, string> = {
   action: 'query',
   prop: 'pageimages|extracts|info',
   piprop: 'thumbnail',
-  pithumbsize: '300',
+  pithumbsize: '150',
   exintro: '1',
   explaintext: '1',
   exsentences: '2',

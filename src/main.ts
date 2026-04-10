@@ -1,6 +1,31 @@
 import './style.css'
 import './tailwind.css'
-import * as THREE from 'three'
+import {
+  ACESFilmicToneMapping,
+  AmbientLight,
+  CanvasTexture,
+  Clock,
+  Color,
+  DirectionalLight,
+  DoubleSide,
+  Frustum,
+  MathUtils,
+  Matrix4,
+  Mesh,
+  MeshBasicMaterial,
+  OrthographicCamera,
+  PerspectiveCamera,
+  PlaneGeometry,
+  Raycaster,
+  Scene,
+  ShaderMaterial,
+  Sphere,
+  SRGBColorSpace,
+  TextureLoader,
+  Vector2,
+  Vector3,
+  WebGLRenderer,
+} from 'three'
 import gsap from 'gsap'
 import { motionDials } from './motion-dials'
 import { tunnelSpawnEase } from './tunnel-spawn-ease'
@@ -10,16 +35,19 @@ import { gradientDials } from './gradient-dials'
 
 import {
   ensurePool,
+  fetchBatch,
   fetchBatchesParallel as wikiFetchBatchesParallel,
   fetchLinkedExtract,
-  prefill as wikiPrefill,
+  next as wikiNext,
+  poolSize as wikiPoolSize,
   setFilter as wikiSetFilter,
   takeNext,
   type WikiArticle,
 } from './wiki-service'
 import { createDetailPanel } from './wiki-detail-panel'
 import { createHistoryTray } from './image-history-tray'
-import { mountLoadingProgress } from './loading-progress-mount'
+
+const earlyFetch = fetchBatch(20)
 
 /* ── DOM ─────────────────────────────────────────────────── */
 
@@ -44,15 +72,15 @@ app.innerHTML = `
 
 const canvas = document.querySelector<HTMLCanvasElement>('#webgl')!
 
-const scene = new THREE.Scene()
-const sceneBg = new THREE.Color(0xf0f0f0)
+const scene = new Scene()
+const sceneBg = new Color(0xf0f0f0)
 scene.background = sceneBg
 scene.fog = null
 
-const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 120)
+const camera = new PerspectiveCamera(52, 1, 0.1, 120)
 camera.position.set(0, 0, 7.5)
 
-const renderer = new THREE.WebGLRenderer({
+const renderer = new WebGLRenderer({
   canvas,
   antialias: true,
   alpha: false,
@@ -61,23 +89,23 @@ const renderer = new THREE.WebGLRenderer({
   preserveDrawingBuffer: true,
 })
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-renderer.outputColorSpace = THREE.SRGBColorSpace
-renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.outputColorSpace = SRGBColorSpace
+renderer.toneMapping = ACESFilmicToneMapping
 renderer.toneMappingExposure = 1.0
 renderer.autoClear = false
 
-scene.add(new THREE.AmbientLight(0xf0f0f0, 0.48))
-const fill = new THREE.DirectionalLight(0xf0f0f0, 1)
+scene.add(new AmbientLight(0xf0f0f0, 0.48))
+const fill = new DirectionalLight(0xf0f0f0, 1)
 fill.position.set(2, 4, 8)
 scene.add(fill)
 
 /* ── Focus gradient (fullscreen quad via analytical shader) ── */
 
-const gradMat = new THREE.ShaderMaterial({
+const gradMat = new ShaderMaterial({
   transparent: true,
   depthTest: false,
   depthWrite: false,
-  side: THREE.DoubleSide,
+  side: DoubleSide,
   toneMapped: false,
   uniforms: {
     uOpacity: { value: 0 },
@@ -110,22 +138,22 @@ const gradMat = new THREE.ShaderMaterial({
     }
   `,
 })
-const gradQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), gradMat)
+const gradQuad = new Mesh(new PlaneGeometry(2, 2), gradMat)
 gradQuad.frustumCulled = false
-const gradScene = new THREE.Scene()
+const gradScene = new Scene()
 gradScene.add(gradQuad)
-const gradCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+const gradCam = new OrthographicCamera(-1, 1, 1, -1, 0, 1)
 
 /* ── Wikipedia texture loading ───────────────────────────── */
 
-const texLoader = new THREE.TextureLoader()
+const texLoader = new TextureLoader()
 texLoader.setCrossOrigin('anonymous')
 
-const meshArticleMap = new Map<THREE.Mesh, WikiArticle>()
-const meshAspectMap = new Map<THREE.Mesh, number>()
+const meshArticleMap = new Map<Mesh, WikiArticle>()
+const meshAspectMap = new Map<Mesh, number>()
 const maxAniso = renderer.capabilities.getMaxAnisotropy()
 
-function applyAspectScale(mesh: THREE.Mesh, ar: number): void {
+function applyAspectScale(mesh: Mesh, ar: number): void {
   let displayW = imageDials.planeWidth
   let displayH = imageDials.planeWidth / ar
 
@@ -158,14 +186,14 @@ function applyAspectScale(mesh: THREE.Mesh, ar: number): void {
   )
 }
 
-function loadWikiTexture(mesh: THREE.Mesh, article: WikiArticle): Promise<void> {
+function loadWikiTexture(mesh: Mesh, article: WikiArticle): Promise<boolean> {
   return new Promise((resolve) => {
     texLoader.load(
       article.thumbUrl,
       (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace
+        tex.colorSpace = SRGBColorSpace
         tex.anisotropy = maxAniso
-        const mat = mesh.material as THREE.MeshBasicMaterial
+        const mat = mesh.material as MeshBasicMaterial
         mat.map?.dispose()
         mat.map = tex
         mat.needsUpdate = true
@@ -183,19 +211,19 @@ function loadWikiTexture(mesh: THREE.Mesh, article: WikiArticle): Promise<void> 
           gsap.killTweensOf(mesh.scale)
           applyAspectScale(mesh, ar)
         }
-        resolve()
+        resolve(true)
       },
       undefined,
       () => {
-        resolve()
+        resolve(false)
       },
     )
   })
 }
 
-const meshAssignInFlight = new WeakSet<THREE.Mesh>()
+const meshAssignInFlight = new WeakSet<Mesh>()
 
-function assignArticleToMesh(mesh: THREE.Mesh): Promise<void> {
+function assignArticleToMesh(mesh: Mesh): Promise<void> {
   if (meshAssignInFlight.has(mesh)) return Promise.resolve()
   meshAssignInFlight.add(mesh)
   return (async () => {
@@ -212,24 +240,24 @@ function assignArticleToMesh(mesh: THREE.Mesh): Promise<void> {
 
 let initialLoadComplete = false
 
-const scratchCamPos = new THREE.Vector3()
-const scratchMeshPos = new THREE.Vector3()
-const scratchSphere = new THREE.Sphere()
+const scratchCamPos = new Vector3()
+const scratchMeshPos = new Vector3()
+const scratchSphere = new Sphere()
 
 /** Meshes whose bounds intersect the camera frustum at load (closest first). */
 function getInitiallyVisibleMeshes(
-  cam: THREE.PerspectiveCamera,
-  meshList: THREE.Mesh[],
-): THREE.Mesh[] {
+  cam: PerspectiveCamera,
+  meshList: Mesh[],
+): Mesh[] {
   cam.updateMatrixWorld(true)
-  const frustum = new THREE.Frustum()
-  const m = new THREE.Matrix4().multiplyMatrices(
+  const frustum = new Frustum()
+  const m = new Matrix4().multiplyMatrices(
     cam.projectionMatrix,
     cam.matrixWorldInverse,
   )
   frustum.setFromProjectionMatrix(m)
 
-  const visible: THREE.Mesh[] = []
+  const visible: Mesh[] = []
   for (const mesh of meshList) {
     mesh.updateMatrixWorld(true)
     const geo = mesh.geometry
@@ -276,7 +304,7 @@ function addHorizontalImpulse(delta: number, mode: 'wheel' | 'drag') {
   if (mode === 'drag') d *= TUNNEL_DRAG_SCALE
   if (motionDials.invertScrollX) d *= -1
   scrollXVel += d
-  scrollXVel = THREE.MathUtils.clamp(
+  scrollXVel = MathUtils.clamp(
     scrollXVel,
     -motionDials.horizontalVelMax,
     motionDials.horizontalVelMax,
@@ -288,7 +316,7 @@ function addVerticalStrafeImpulse(delta: number, mode: 'wheel' | 'drag') {
   let d = delta * motionDials.horizontalScrollGain
   if (mode === 'drag') d *= TUNNEL_DRAG_SCALE
   scrollYVel += d
-  scrollYVel = THREE.MathUtils.clamp(
+  scrollYVel = MathUtils.clamp(
     scrollYVel,
     -motionDials.horizontalVelMax,
     motionDials.horizontalVelMax,
@@ -305,17 +333,17 @@ window.addEventListener(
     let dy = e.deltaY * motionDials.wheelGain
     if (motionDials.invertScrollZ) dy *= -1
     scrollZVel += dy
-    scrollZVel = THREE.MathUtils.clamp(scrollZVel, motionDials.zVelMin, motionDials.zVelMax)
+    scrollZVel = MathUtils.clamp(scrollZVel, motionDials.zVelMin, motionDials.zVelMax)
   },
   { passive: false },
 )
 
 /* ── Raycasting & click-to-focus ─────────────────────────── */
 
-const raycaster = new THREE.Raycaster()
-const ndcScratch = new THREE.Vector2()
+const raycaster = new Raycaster()
+const ndcScratch = new Vector2()
 
-function ndcFromClient(clientX: number, clientY: number): THREE.Vector2 {
+function ndcFromClient(clientX: number, clientY: number): Vector2 {
   const r = canvas.getBoundingClientRect()
   const nx = (clientX - r.left) / Math.max(r.width, 1e-6)
   const ny = (clientY - r.top) / Math.max(r.height, 1e-6)
@@ -324,8 +352,8 @@ function ndcFromClient(clientX: number, clientY: number): THREE.Vector2 {
 }
 
 const CAM_PAN_CLAMP = 12
-const focusTarget = new THREE.Vector3()
-let focusedMesh: THREE.Mesh | null = null
+const focusTarget = new Vector3()
+let focusedMesh: Mesh | null = null
 
 const FOCUS_TRANSITION_S = 0.2
 const focusBlend = { value: 0 }
@@ -384,9 +412,14 @@ const filterLoadingEl = document.getElementById('filter-loading')!
 const detailPanel = createDetailPanel({ onClose: beginFocusExit })
 app.appendChild(detailPanel.el)
 
-const setLoadingProgress = mountLoadingProgress(
-  document.getElementById('loading-progress-root')!,
-)
+const loadingProgressTrack = document.getElementById('loading-progress-root')!
+loadingProgressTrack.innerHTML =
+  '<div style="width:12rem;height:4px;border-radius:9999px;background:#e5e5e5;overflow:hidden">' +
+  '<div id="loading-bar" style="width:0%;height:100%;border-radius:9999px;background:#1a1a1a;transition:width .2s ease"></div></div>'
+const loadingBar = document.getElementById('loading-bar')!
+function setLoadingProgress(value: number) {
+  loadingBar.style.width = `${Math.min(100, Math.max(0, value))}%`
+}
 
 /* ── Hover cursor label ──────────────────────────────────── */
 
@@ -397,10 +430,10 @@ app.appendChild(cursorLabel)
 const historyTray = createHistoryTray(app)
 app.appendChild(historyTray.el)
 
-function focusMeshOnScreen(mesh: THREE.Mesh, onSettled?: () => void) {
+function focusMeshOnScreen(mesh: Mesh, onSettled?: () => void) {
   focusedMesh = mesh
   mesh.updateMatrixWorld(true)
-  const worldPos = new THREE.Vector3()
+  const worldPos = new Vector3()
   mesh.getWorldPosition(worldPos)
 
   // Shift mesh ~150px above vertical center by moving the camera downward
@@ -410,8 +443,8 @@ function focusMeshOnScreen(mesh: THREE.Mesh, onSettled?: () => void) {
   const yShift = (150 / window.innerHeight) * visibleH
 
   focusTarget.set(
-    THREE.MathUtils.clamp(worldPos.x, -CAM_PAN_CLAMP, CAM_PAN_CLAMP),
-    THREE.MathUtils.clamp(worldPos.y, -CAM_PAN_CLAMP, CAM_PAN_CLAMP) - yShift,
+MathUtils.clamp(worldPos.x, -CAM_PAN_CLAMP, CAM_PAN_CLAMP),
+MathUtils.clamp(worldPos.y, -CAM_PAN_CLAMP, CAM_PAN_CLAMP) - yShift,
     worldPos.z + focusDials.cameraToMeshDistance,
   )
 
@@ -478,7 +511,7 @@ function moveCursorLabel(cx: number, cy: number) {
   cursorLabel.style.top = `${cy + 12}px`
 }
 
-let hoveredMesh: THREE.Mesh | null = null
+let hoveredMesh: Mesh | null = null
 
 cursorLabel.addEventListener('transitionend', () => {
   if (cursorLabelFading) cursorLabelFading = false
@@ -523,7 +556,7 @@ canvas.addEventListener('pointermove', (e) => {
   const hits = raycaster.intersectObjects(meshes, false)
   const hit = hits[0]
 
-  if (hit && hit.object instanceof THREE.Mesh) {
+  if (hit && hit.object instanceof Mesh) {
     const mesh = hit.object
     const article = meshArticleMap.get(mesh)
     if (article) {
@@ -577,7 +610,7 @@ canvas.addEventListener('pointerup', (e) => {
   const hit = hits[0]
   if (!hit) return
   const mesh = hit.object
-  if (mesh instanceof THREE.Mesh) {
+  if (mesh instanceof Mesh) {
     hoveredMesh = null
     cursorLabelFading = false
     hideCursorLabel()
@@ -597,22 +630,22 @@ canvas.addEventListener('pointerup', (e) => {
 
 /* ── Placeholder texture ─────────────────────────────────── */
 
-function makeImageTexture(_seed: number): THREE.CanvasTexture {
+function makeImageTexture(_seed: number): CanvasTexture {
   const c = document.createElement('canvas')
   c.width = 2
   c.height = 2
   const ctx = c.getContext('2d')!
   ctx.fillStyle = '#d0d0d0'
   ctx.fillRect(0, 0, 2, 2)
-  const tex = new THREE.CanvasTexture(c)
-  tex.colorSpace = THREE.SRGBColorSpace
+  const tex = new CanvasTexture(c)
+  tex.colorSpace = SRGBColorSpace
   return tex
 }
 
 /* ── Mesh pool ───────────────────────────────────────────── */
 
-let sharedPlaneGeometry: THREE.PlaneGeometry | null = null
-const meshes: THREE.Mesh[] = []
+let sharedPlaneGeometry: PlaneGeometry | null = null
+const meshes: Mesh[] = []
 
 function syncSharedPlaneGeometry(): void {
   const w = imageDials.planeWidth
@@ -623,34 +656,23 @@ function syncSharedPlaneGeometry(): void {
     sharedPlaneGeometry.parameters.height !== h
   if (!needNew) return
   const old = sharedPlaneGeometry
-  sharedPlaneGeometry = new THREE.PlaneGeometry(w, h)
+  sharedPlaneGeometry = new PlaneGeometry(w, h)
   for (const m of meshes) {
     m.geometry = sharedPlaneGeometry
   }
   old?.dispose()
 }
 
-function removeMeshAtEnd(): void {
-  const m = meshes.pop()
-  if (!m) return
-  meshArticleMap.delete(m)
-  meshAspectMap.delete(m)
-  scene.remove(m)
-  const mat = m.material as THREE.MeshBasicMaterial
-  mat.map?.dispose()
-  mat.dispose()
-}
-
-function createMeshForIndex(i: number): THREE.Mesh {
+function createMeshForIndex(i: number): Mesh {
   const tex = makeImageTexture(i + 1)
-  const mat = new THREE.MeshBasicMaterial({
+  const mat = new MeshBasicMaterial({
     map: tex,
-    side: THREE.DoubleSide,
+    side: DoubleSide,
     transparent: true,
     opacity: imageDials.planeOpacity,
     fog: false,
   })
-  const mesh = new THREE.Mesh(sharedPlaneGeometry!, mat)
+  const mesh = new Mesh(sharedPlaneGeometry!, mat)
   mesh.position.x = (Math.random() - 0.5) * imageDials.fieldX * imageDials.initialSpread
   mesh.position.y = (Math.random() - 0.5) * imageDials.fieldY * imageDials.initialSpread
   mesh.position.z = imageDials.tunnelInitialZBase - i * imageDials.zSpacing
@@ -662,72 +684,98 @@ function createMeshForIndex(i: number): THREE.Mesh {
   return mesh
 }
 
-function syncMeshCount(): void {
-  const raw = Math.round(imageDials.planeCount)
-  const target = THREE.MathUtils.clamp(raw, 4, 120)
-  if (target !== imageDials.planeCount) {
-    imageDials.planeCount = target
-    const input = document.getElementById('image-dial-planeCount') as HTMLInputElement | null
-    if (input) input.value = String(target)
-  }
-  syncSharedPlaneGeometry()
-  while (meshes.length > target) {
-    removeMeshAtEnd()
-  }
+const INITIAL_MESH_COUNT = 15
+syncSharedPlaneGeometry()
+for (let i = 0; i < INITIAL_MESH_COUNT; i++) {
+  meshes.push(createMeshForIndex(i))
+}
+
+function deferRemainingMeshes() {
+  const target = MathUtils.clamp(Math.round(imageDials.planeCount), 4, 120)
+  if (meshes.length >= target) return
+
+  const newMeshes: Mesh[] = []
   while (meshes.length < target) {
     const i = meshes.length
     meshes.push(createMeshForIndex(i))
+    const mesh = meshes[i]
+    newMeshes.push(mesh)
+    const mat = mesh.material as MeshBasicMaterial
+    const targetScaleX = mesh.scale.x
+    const targetScaleY = mesh.scale.y
+    const targetY = mesh.position.y
+    mesh.scale.set(0.001, 0.001, 1)
+    mesh.position.y = targetY - motionDials.tunnelSpawnYOffset
+    mat.opacity = 0
+    mesh.visible = true
+    const d = motionDials.tunnelSpawnDuration
+    const delay = (i - INITIAL_MESH_COUNT) * 0.02
+    gsap.to(mesh.position, { y: targetY, duration: d, ease: tunnelSpawnEase, delay })
+    gsap.to(mesh.scale, { x: targetScaleX, y: targetScaleY, duration: d, ease: tunnelSpawnEase, delay })
+    gsap.to(mat, { opacity: imageDials.planeOpacity, duration: d, ease: tunnelSpawnEase, delay })
   }
-}
 
-syncMeshCount()
+  void (async () => {
+    const batchSize = 20
+    const batchesNeeded = Math.ceil((newMeshes.length + 10) / (batchSize * 0.6))
+    await wikiFetchBatchesParallel(batchesNeeded, batchSize)
+    await ensurePool(newMeshes.length)
+    for (const mesh of newMeshes) {
+      if (!meshArticleMap.has(mesh)) assignArticleToMesh(mesh)
+    }
+  })()
+}
 
 /* ── Wikipedia prefill ───────────────────────────────────── */
 
 /**
- * Prefills the article pool for frustum-visible meshes, waits only for those
- * textures, then reveals the tunnel. Remaining meshes are filled in the
- * background so the user sees content ~seconds earlier on slow connections.
+ * Streams article fetching and texture loading in parallel: as each API batch
+ * lands, immediately starts assigning articles to visible meshes instead of
+ * waiting for all batches before any texture work begins.
  */
 async function loadWikiImagesProgressively(): Promise<void> {
-  const visibleFirst = getInitiallyVisibleMeshes(camera, meshes)
+  const initialMeshes = meshes.slice()
+  const total = initialMeshes.length || 1
+  let loaded = 0
 
   setLoadingProgress(10)
 
-  if (visibleFirst.length > 0) {
-    await wikiPrefill(visibleFirst.length)
-  }
+  await earlyFetch
 
-  setLoadingProgress(30)
+  setLoadingProgress(20)
 
-  let loaded = 0
-  const total = visibleFirst.length || 1
-  const visibleLoads: Promise<void>[] = []
-  for (const mesh of visibleFirst) {
-    if (!meshArticleMap.has(mesh)) {
-      visibleLoads.push(
-        assignArticleToMesh(mesh).then(() => {
-          loaded++
-          setLoadingProgress(30 + Math.round((loaded / total) * 60))
-        }),
-      )
+  const pending = initialMeshes.filter((m) => !meshArticleMap.has(m))
+  const MAX_RETRIES = 3
+
+  async function loadMeshWithRetry(mesh: Mesh): Promise<void> {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const article = wikiNext()
+        ?? (await fetchBatch(20), wikiNext())
+        ?? (await fetchBatch(20), wikiNext())
+      if (!article) continue
+      meshArticleMap.set(mesh, article)
+      const ok = await loadWikiTexture(mesh, article)
+      if (ok) return
+      meshArticleMap.delete(mesh)
     }
   }
 
-  await Promise.all(visibleLoads)
+  while (pending.length > 0) {
+    if (wikiPoolSize() === 0) await fetchBatch(20)
+    const batch = pending.splice(0, Math.max(1, wikiPoolSize()))
+    await Promise.all(
+      batch.map((mesh) =>
+        loadMeshWithRetry(mesh).then(() => {
+          loaded++
+          setLoadingProgress(20 + Math.round((loaded / total) * 70))
+        }),
+      ),
+    )
+  }
+
   setLoadingProgress(100)
   playInitialEntrance()
-
-  const remaining = meshes.filter((m) => !meshArticleMap.has(m))
-  if (remaining.length > 0) {
-    const batchSize = 20
-    const batchesNeeded = Math.ceil((remaining.length + 10) / (batchSize * 0.6))
-    await wikiFetchBatchesParallel(batchesNeeded, batchSize)
-    await ensurePool(remaining.length)
-    for (const mesh of remaining) {
-      if (!meshArticleMap.has(mesh)) assignArticleToMesh(mesh)
-    }
-  }
+  deferRemainingMeshes()
 }
 
 function playInitialEntrance(): void {
@@ -754,7 +802,7 @@ function playInitialEntrance(): void {
 
   ordered.forEach((mesh, i) => {
     const delay = i * STAGGER
-    const mat = mesh.material as THREE.MeshBasicMaterial
+    const mat = mesh.material as MeshBasicMaterial
 
     const targetScaleX = mesh.scale.x
     const targetScaleY = mesh.scale.y
@@ -816,7 +864,7 @@ async function reloadTunnelForFilter(): Promise<void> {
       if (total === 0) { resolve(); return }
 
       ordered.forEach((mesh, i) => {
-        const mat = mesh.material as THREE.MeshBasicMaterial
+        const mat = mesh.material as MeshBasicMaterial
         const delay = i * STAGGER
 
         gsap.killTweensOf(mesh.scale)
@@ -885,7 +933,7 @@ function tunnelLength(): number {
   return imageDials.planeCount * imageDials.zSpacing
 }
 
-const clock = new THREE.Clock()
+const clock = new Clock()
 
 let lastPlaneW = imageDials.planeWidth
 
@@ -947,7 +995,7 @@ function tick() {
         const targetScaleY = mesh.scale.y
         mesh.scale.set(0.001, 0.001, 1)
         mesh.position.y = targetY - motionDials.tunnelSpawnYOffset
-        const mat = mesh.material as THREE.MeshBasicMaterial
+        const mat = mesh.material as MeshBasicMaterial
         mat.opacity = 0
 
         const d = motionDials.tunnelSpawnDuration
@@ -984,8 +1032,8 @@ function tick() {
     camera.position.y += scrollYVel * dt
   }
 
-  camera.position.x = THREE.MathUtils.clamp(camera.position.x, -CAM_PAN_CLAMP, CAM_PAN_CLAMP)
-  camera.position.y = THREE.MathUtils.clamp(camera.position.y, -CAM_PAN_CLAMP, CAM_PAN_CLAMP)
+  camera.position.x = MathUtils.clamp(camera.position.x, -CAM_PAN_CLAMP, CAM_PAN_CLAMP)
+  camera.position.y = MathUtils.clamp(camera.position.y, -CAM_PAN_CLAMP, CAM_PAN_CLAMP)
 
   if (!detailPanel.el.hidden) {
     detailPanel.el.style.opacity = String(focusBlend.value)
