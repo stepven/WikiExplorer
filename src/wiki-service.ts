@@ -261,3 +261,75 @@ export async function prefill(n: number): Promise<void> {
 export function poolSize(): number {
   return pool.length
 }
+
+/* ── Loading-screen preview cards (pool-independent) ───── */
+
+export interface WikiPreviewCard {
+  title: string
+  extract: string
+  thumbUrl: string
+  pageUrl: string
+}
+
+/**
+ * Fetch `count` random Wikipedia articles with thumbnails for the loading-screen
+ * carousel.  Uses a standalone request (does not read/write the shared pool).
+ * Over-fetches because many random pages lack thumbnails; retries once if needed.
+ */
+export async function fetchRandomPreviewCards(count: number): Promise<WikiPreviewCard[]> {
+  const cards: WikiPreviewCard[] = []
+  const maxAttempts = 2
+
+  for (let attempt = 0; attempt < maxAttempts && cards.length < count; attempt++) {
+    try {
+      const params = new URLSearchParams({
+        action: 'query',
+        generator: 'random',
+        grnnamespace: '0',
+        grnlimit: '30',
+        prop: 'pageimages|extracts|info',
+        piprop: 'thumbnail',
+        pithumbsize: '320',
+        exintro: '1',
+        explaintext: '1',
+        exsentences: '1',
+        inprop: 'url',
+        format: 'json',
+        origin: '*',
+      })
+      const resp = await fetch(`${API_URL}?${params}`)
+      if (!resp.ok) continue
+      const json = (await resp.json()) as {
+        query?: {
+          pages?: Record<
+            string,
+            {
+              title?: string
+              extract?: string
+              fullurl?: string
+              thumbnail?: { source: string }
+            }
+          >
+        }
+      }
+      const pages = json?.query?.pages
+      if (!pages) continue
+      for (const page of Object.values(pages)) {
+        if (cards.length >= count) break
+        if (!page.thumbnail?.source || !page.extract) continue
+        cards.push({
+          title: page.title ?? '',
+          extract: page.extract,
+          thumbUrl: page.thumbnail.source,
+          pageUrl:
+            page.fullurl ??
+            `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title ?? '')}`,
+        })
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  return cards
+}

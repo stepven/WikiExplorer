@@ -356,7 +356,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  padding-top: calc(50vh - 1.25rem - 100px);
   pointer-events: none;
 }
 
@@ -371,6 +372,123 @@ body {
 .loading-indicator__progress {
   margin-top: 0.75rem;
   width: 12rem;
+}
+
+/* ── Loading preview carousel ────────────────────────────── */
+
+.loading-preview-root {
+  margin-top: 1.5rem;
+  width: min(90vw, 300px);
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.loading-preview-root.lpc-ready {
+  opacity: 1;
+}
+
+.lpc__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  height: 260px;
+  transition: opacity 0.25s ease;
+}
+
+.lpc__card.lpc__card--fading {
+  opacity: 0;
+}
+
+.lpc__img-wrap {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.lpc__img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.lpc__extract {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #555;
+  text-align: center;
+  height: calc(0.8rem * 1.45 * 3);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lpc__nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.lpc__arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.lpc__arrow:hover {
+  color: #333;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.lpc__arrow:focus-visible {
+  outline: 2px solid #888;
+  outline-offset: 2px;
+}
+
+.lpc__dots {
+  display: flex;
+  gap: 6px;
+}
+
+.lpc__dot {
+  width: 6px;
+  height: 6px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  background: #ccc;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.lpc__dot--active {
+  background: #555;
+  transform: scale(1.3);
+}
+
+.lpc__dot:focus-visible {
+  outline: 2px solid #888;
+  outline-offset: 2px;
 }
 
 /* ── Topic filter mount ──────────────────────────────────── */

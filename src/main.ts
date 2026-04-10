@@ -38,14 +38,13 @@ import {
   fetchBatch,
   fetchBatchesParallel as wikiFetchBatchesParallel,
   fetchLinkedExtract,
-  next as wikiNext,
-  poolSize as wikiPoolSize,
   setFilter as wikiSetFilter,
   takeNext,
   type WikiArticle,
 } from './wiki-service'
 import { createDetailPanel } from './wiki-detail-panel'
 import { createHistoryTray } from './image-history-tray'
+import { mountLoadingPreviewCarousel } from './loading-preview-carousel'
 
 const earlyFetch = fetchBatch(20)
 
@@ -57,6 +56,7 @@ app.innerHTML = `
   <div id="loading-indicator" class="loading-indicator">
     <h1 class="loading-indicator__title">Wiki Explorer</h1>
     <div id="loading-progress-root" class="loading-indicator__progress"></div>
+    <div id="loading-preview-root" class="loading-preview-root" hidden></div>
   </div>
   <div id="topic-filter-root"></div>
   <div class="bottom-hint-stack">
@@ -191,27 +191,53 @@ function loadWikiTexture(mesh: Mesh, article: WikiArticle): Promise<boolean> {
     texLoader.load(
       article.thumbUrl,
       (tex) => {
-        tex.colorSpace = SRGBColorSpace
-        tex.anisotropy = maxAniso
-        const mat = mesh.material as MeshBasicMaterial
-        mat.map?.dispose()
-        mat.map = tex
-        mat.needsUpdate = true
-        const img = tex.image as {
-          naturalWidth?: number
-          naturalHeight?: number
-          width?: number
-          height?: number
-        }
-        const w = img?.naturalWidth ?? img?.width ?? 0
-        const h = img?.naturalHeight ?? img?.height ?? 0
-        if (w > 0 && h > 0) {
-          const ar = w / h
-          meshAspectMap.set(mesh, ar)
-          gsap.killTweensOf(mesh.scale)
-          applyAspectScale(mesh, ar)
-        }
-        resolve(true)
+        void (async () => {
+          try {
+            const imgEl = tex.image
+            if (imgEl instanceof HTMLImageElement && imgEl.decode) {
+              try {
+                await imgEl.decode()
+              } catch {
+                tex.dispose()
+                resolve(false)
+                return
+              }
+            }
+            const img = tex.image as {
+              naturalWidth?: number
+              naturalHeight?: number
+              width?: number
+              height?: number
+            }
+            let w = img?.naturalWidth ?? img?.width ?? 0
+            let h = img?.naturalHeight ?? img?.height ?? 0
+            if (w === 0 || h === 0) {
+              await new Promise<void>((r) => requestAnimationFrame(() => r()))
+              w = img?.naturalWidth ?? img?.width ?? 0
+              h = img?.naturalHeight ?? img?.height ?? 0
+            }
+            if (w === 0 || h === 0) {
+              tex.dispose()
+              resolve(false)
+              return
+            }
+            tex.colorSpace = SRGBColorSpace
+            tex.anisotropy = maxAniso
+            tex.needsUpdate = true
+            const mat = mesh.material as MeshBasicMaterial
+            mat.map?.dispose()
+            mat.map = tex
+            mat.needsUpdate = true
+            const ar = w / h
+            meshAspectMap.set(mesh, ar)
+            gsap.killTweensOf(mesh.scale)
+            applyAspectScale(mesh, ar)
+            resolve(true)
+          } catch {
+            tex.dispose()
+            resolve(false)
+          }
+        })()
       },
       undefined,
       () => {
@@ -420,6 +446,8 @@ const loadingBar = document.getElementById('loading-bar')!
 function setLoadingProgress(value: number) {
   loadingBar.style.width = `${Math.min(100, Math.max(0, value))}%`
 }
+
+mountLoadingPreviewCarousel(document.getElementById('loading-preview-root')!)
 
 /* ── Hover cursor label ──────────────────────────────────── */
 
@@ -663,6 +691,35 @@ function syncSharedPlaneGeometry(): void {
   old?.dispose()
 }
 
+function removeMeshAtEnd(): void {
+  const m = meshes.pop()
+  if (!m) return
+  meshArticleMap.delete(m)
+  meshAspectMap.delete(m)
+  scene.remove(m)
+  const mat = m.material as MeshBasicMaterial
+  mat.map?.dispose()
+  mat.dispose()
+}
+
+function syncMeshCount(): void {
+  const raw = Math.round(imageDials.planeCount)
+  const target = MathUtils.clamp(raw, 4, 120)
+  if (target !== imageDials.planeCount) {
+    imageDials.planeCount = target
+    const input = document.getElementById('image-dial-planeCount') as HTMLInputElement | null
+    if (input) input.value = String(target)
+  }
+  syncSharedPlaneGeometry()
+  while (meshes.length > target) {
+    removeMeshAtEnd()
+  }
+  while (meshes.length < target) {
+    const i = meshes.length
+    meshes.push(createMeshForIndex(i))
+  }
+}
+
 function createMeshForIndex(i: number): Mesh {
   const tex = makeImageTexture(i + 1)
   const mat = new MeshBasicMaterial({
@@ -684,98 +741,63 @@ function createMeshForIndex(i: number): Mesh {
   return mesh
 }
 
-const INITIAL_MESH_COUNT = 15
-syncSharedPlaneGeometry()
-for (let i = 0; i < INITIAL_MESH_COUNT; i++) {
-  meshes.push(createMeshForIndex(i))
-}
-
-function deferRemainingMeshes() {
-  const target = MathUtils.clamp(Math.round(imageDials.planeCount), 4, 120)
-  if (meshes.length >= target) return
-
-  const newMeshes: Mesh[] = []
-  while (meshes.length < target) {
-    const i = meshes.length
-    meshes.push(createMeshForIndex(i))
-    const mesh = meshes[i]
-    newMeshes.push(mesh)
-    const mat = mesh.material as MeshBasicMaterial
-    const targetScaleX = mesh.scale.x
-    const targetScaleY = mesh.scale.y
-    const targetY = mesh.position.y
-    mesh.scale.set(0.001, 0.001, 1)
-    mesh.position.y = targetY - motionDials.tunnelSpawnYOffset
-    mat.opacity = 0
-    mesh.visible = true
-    const d = motionDials.tunnelSpawnDuration
-    const delay = (i - INITIAL_MESH_COUNT) * 0.02
-    gsap.to(mesh.position, { y: targetY, duration: d, ease: tunnelSpawnEase, delay })
-    gsap.to(mesh.scale, { x: targetScaleX, y: targetScaleY, duration: d, ease: tunnelSpawnEase, delay })
-    gsap.to(mat, { opacity: imageDials.planeOpacity, duration: d, ease: tunnelSpawnEase, delay })
-  }
-
-  void (async () => {
-    const batchSize = 20
-    const batchesNeeded = Math.ceil((newMeshes.length + 10) / (batchSize * 0.6))
-    await wikiFetchBatchesParallel(batchesNeeded, batchSize)
-    await ensurePool(newMeshes.length)
-    for (const mesh of newMeshes) {
-      if (!meshArticleMap.has(mesh)) assignArticleToMesh(mesh)
-    }
-  })()
-}
+syncMeshCount()
 
 /* ── Wikipedia prefill ───────────────────────────────────── */
 
 /**
- * Streams article fetching and texture loading in parallel: as each API batch
- * lands, immediately starts assigning articles to visible meshes instead of
- * waiting for all batches before any texture work begins.
+ * Loads a Wikipedia thumbnail onto every mesh before the entrance animation.
+ * Uses takeNext + decode validation; retries with new articles until each plane succeeds.
  */
 async function loadWikiImagesProgressively(): Promise<void> {
-  const initialMeshes = meshes.slice()
-  const total = initialMeshes.length || 1
+  const allMeshes = meshes.slice()
+  const total = allMeshes.length || 1
   let loaded = 0
 
   setLoadingProgress(10)
 
   await earlyFetch
+  await ensurePool(total)
 
   setLoadingProgress(20)
 
-  const pending = initialMeshes.filter((m) => !meshArticleMap.has(m))
-  const MAX_RETRIES = 3
-
-  async function loadMeshWithRetry(mesh: Mesh): Promise<void> {
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const article = wikiNext()
-        ?? (await fetchBatch(20), wikiNext())
-        ?? (await fetchBatch(20), wikiNext())
-      if (!article) continue
+  /** Keep trying articles until this mesh has a real, drawable thumbnail. */
+  async function loadMeshUntilTextureOk(mesh: Mesh): Promise<void> {
+    let articleAttempts = 0
+    const maxArticles = 80
+    while (articleAttempts < maxArticles) {
+      let article = await takeNext()
+      if (!article) {
+        await fetchBatch(20)
+        articleAttempts++
+        continue
+      }
       meshArticleMap.set(mesh, article)
       const ok = await loadWikiTexture(mesh, article)
       if (ok) return
       meshArticleMap.delete(mesh)
+      articleAttempts++
     }
   }
 
-  while (pending.length > 0) {
-    if (wikiPoolSize() === 0) await fetchBatch(20)
-    const batch = pending.splice(0, Math.max(1, wikiPoolSize()))
-    await Promise.all(
-      batch.map((mesh) =>
-        loadMeshWithRetry(mesh).then(() => {
-          loaded++
-          setLoadingProgress(20 + Math.round((loaded / total) * 70))
-        }),
-      ),
-    )
+  const CONCURRENCY = 5
+  let nextIndex = 0
+  async function worker(): Promise<void> {
+    while (true) {
+      const i = nextIndex++
+      if (i >= allMeshes.length) return
+      await loadMeshUntilTextureOk(allMeshes[i])
+      loaded++
+      setLoadingProgress(20 + Math.round((loaded / total) * 70))
+    }
   }
+
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, allMeshes.length) }, () => worker()),
+  )
 
   setLoadingProgress(100)
   playInitialEntrance()
-  deferRemainingMeshes()
 }
 
 function playInitialEntrance(): void {
