@@ -9,7 +9,8 @@ import { imageDials } from './image-dials'
 import { gradientDials } from './gradient-dials'
 
 import {
-  fetchBatch as wikiFetchBatch,
+  fetchBatchesParallel as wikiFetchBatchesParallel,
+  fetchLinkedExtract,
   next as wikiNext,
   prefill as wikiPrefill,
   setFilter as wikiSetFilter,
@@ -17,7 +18,7 @@ import {
 } from './wiki-service'
 import { createDetailPanel } from './wiki-detail-panel'
 import { createHistoryTray } from './image-history-tray'
-import { mountTopicFilter } from './topic-filter-mount.tsx'
+import { mountLoadingProgress } from './loading-progress-mount'
 
 /* ── DOM ─────────────────────────────────────────────────── */
 
@@ -26,10 +27,7 @@ app.innerHTML = `
   <canvas id="webgl" aria-label="Wikipedia image tunnel"></canvas>
   <div id="loading-indicator" class="loading-indicator">
     <h1 class="loading-indicator__title">Wiki Explorer</h1>
-    <p class="loading-indicator__status">
-      <svg class="loading-indicator__spinner" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
-      loading...
-    </p>
+    <div id="loading-progress-root" class="loading-indicator__progress"></div>
   </div>
   <div id="topic-filter-root"></div>
   <div class="bottom-hint-stack">
@@ -37,7 +35,7 @@ app.innerHTML = `
       <svg class="filter-loading__spinner" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
       <span class="filter-loading__label">Updating images…</span>
     </div>
-    <p id="scroll-hint" class="scroll-hint scroll-hint--pending">scroll to explore, interact with an image to read more</p>
+    <p id="scroll-hint" class="scroll-hint scroll-hint--pending">scroll or drag to explore, click an image to read more</p>
   </div>
 `
 
@@ -247,25 +245,46 @@ function getInitiallyVisibleMeshes(
 
 let scrollZVel = 0
 let scrollXVel = 0
+let scrollYVel = 0
+
+/** Pointer movement is much smaller than typical wheel deltas — scale so canvas drag matches trackpad feel. */
+const TUNNEL_DRAG_SCALE = 7
+
+function addHorizontalImpulse(delta: number, mode: 'wheel' | 'drag') {
+  let d = delta * motionDials.horizontalScrollGain
+  if (mode === 'drag') d *= TUNNEL_DRAG_SCALE
+  if (motionDials.invertScrollX) d *= -1
+  scrollXVel += d
+  scrollXVel = THREE.MathUtils.clamp(
+    scrollXVel,
+    -motionDials.horizontalVelMax,
+    motionDials.horizontalVelMax,
+  )
+}
+
+/** Vertical camera strafe (screen Y). Pointer down → positive movementY → camera moves up (inverted from screen “grab”). */
+function addVerticalStrafeImpulse(delta: number, mode: 'wheel' | 'drag') {
+  let d = delta * motionDials.horizontalScrollGain
+  if (mode === 'drag') d *= TUNNEL_DRAG_SCALE
+  scrollYVel += d
+  scrollYVel = THREE.MathUtils.clamp(
+    scrollYVel,
+    -motionDials.horizontalVelMax,
+    motionDials.horizontalVelMax,
+  )
+}
 
 window.addEventListener(
   'wheel',
   (e) => {
     e.preventDefault()
+    if (!initialLoadComplete) return
     if (focusedMesh) beginFocusExit()
-    let dx = e.deltaX * motionDials.horizontalScrollGain
-    if (motionDials.invertScrollX) dx *= -1
+    addHorizontalImpulse(e.deltaX, 'wheel')
     let dy = e.deltaY * motionDials.wheelGain
     if (motionDials.invertScrollZ) dy *= -1
     scrollZVel += dy
     scrollZVel = THREE.MathUtils.clamp(scrollZVel, motionDials.zVelMin, motionDials.zVelMax)
-
-    scrollXVel += dx
-    scrollXVel = THREE.MathUtils.clamp(
-      scrollXVel,
-      -motionDials.horizontalVelMax,
-      motionDials.horizontalVelMax,
-    )
   },
   { passive: false },
 )
@@ -344,6 +363,16 @@ const filterLoadingEl = document.getElementById('filter-loading')!
 const detailPanel = createDetailPanel({ onClose: beginFocusExit })
 app.appendChild(detailPanel.el)
 
+const setLoadingProgress = mountLoadingProgress(
+  document.getElementById('loading-progress-root')!,
+)
+
+/* ── Hover cursor label ──────────────────────────────────── */
+
+const cursorLabel = document.createElement('div')
+cursorLabel.id = 'tunnel-cursor-label'
+app.appendChild(cursorLabel)
+
 const historyTray = createHistoryTray(app)
 app.appendChild(historyTray.el)
 
@@ -369,6 +398,7 @@ function focusMeshOnScreen(mesh: THREE.Mesh, onSettled?: () => void) {
   gsap.killTweensOf(mesh.rotation)
   scrollZVel = 0
   scrollXVel = 0
+  scrollYVel = 0
   gsap.to(camera.position, {
     x: focusTarget.x,
     y: focusTarget.y,
@@ -389,17 +419,133 @@ function focusMeshOnScreen(mesh: THREE.Mesh, onSettled?: () => void) {
 let clickDownX = 0
 let clickDownY = 0
 let clickPointerId = -1
+/** True after pointer moved past threshold — click-to-focus is suppressed. */
+let tunnelDrag = false
+
+const TUNNEL_DRAG_THRESHOLD_PX = 8
 
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return
+  tunnelDrag = false
   clickDownX = e.clientX
   clickDownY = e.clientY
   clickPointerId = e.pointerId
 })
 
+function showCursorLabel(text: string, cx: number, cy: number) {
+  cursorLabel.textContent = text
+  cursorLabel.style.left = `${cx + 12}px`
+  cursorLabel.style.top = `${cy + 12}px`
+  cursorLabel.classList.add('visible')
+}
+
+let cursorLabelFading = false
+
+function hideCursorLabel() {
+  cursorLabel.classList.remove('visible')
+  canvas.style.cursor = 'default'
+}
+
+function beginCursorLabelFade() {
+  cursorLabelFading = true
+  cursorLabel.classList.remove('visible')
+  canvas.style.cursor = 'default'
+}
+
+function moveCursorLabel(cx: number, cy: number) {
+  cursorLabel.style.left = `${cx + 12}px`
+  cursorLabel.style.top = `${cy + 12}px`
+}
+
+let hoveredMesh: THREE.Mesh | null = null
+
+cursorLabel.addEventListener('transitionend', () => {
+  if (cursorLabelFading) cursorLabelFading = false
+})
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!initialLoadComplete) return
+
+  if (e.pointerId === clickPointerId && (e.buttons & 1)) {
+    const adx = e.clientX - clickDownX
+    const ady = e.clientY - clickDownY
+    if (!tunnelDrag && Math.hypot(adx, ady) >= TUNNEL_DRAG_THRESHOLD_PX) {
+      tunnelDrag = true
+      beginFocusExit()
+      try {
+        canvas.setPointerCapture(e.pointerId)
+      } catch {
+        /* already captured */
+      }
+      hoveredMesh = null
+      hideCursorLabel()
+      cursorLabelFading = false
+    }
+    if (tunnelDrag) {
+      e.preventDefault()
+      addHorizontalImpulse(e.movementX, 'drag')
+      addVerticalStrafeImpulse(e.movementY, 'drag')
+      canvas.style.cursor = 'grabbing'
+      return
+    }
+  }
+
+  if (cursorLabelFading) moveCursorLabel(e.clientX, e.clientY)
+
+  if (focusedMesh) {
+    if (hoveredMesh) { hoveredMesh = null; hideCursorLabel(); cursorLabelFading = false }
+    return
+  }
+
+  ndcFromClient(e.clientX, e.clientY)
+  raycaster.setFromCamera(ndcScratch, camera)
+  const hits = raycaster.intersectObjects(meshes, false)
+  const hit = hits[0]
+
+  if (hit && hit.object instanceof THREE.Mesh) {
+    const mesh = hit.object
+    const article = meshArticleMap.get(mesh)
+    if (article) {
+      cursorLabelFading = false
+      hoveredMesh = mesh
+      canvas.style.cursor = 'pointer'
+      showCursorLabel(article.title, e.clientX, e.clientY)
+      return
+    }
+  }
+
+  if (hoveredMesh) { hoveredMesh = null; beginCursorLabelFade() }
+})
+
+canvas.addEventListener('pointerleave', () => {
+  if (hoveredMesh) { hoveredMesh = null; beginCursorLabelFade() }
+})
+
+canvas.addEventListener('pointercancel', (e) => {
+  if (e.pointerId !== clickPointerId) return
+  tunnelDrag = false
+  canvas.style.cursor = 'default'
+  try {
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId)
+  } catch {
+    /* */
+  }
+  clickPointerId = -1
+})
+
 canvas.addEventListener('pointerup', (e) => {
   if (e.button !== 0 || e.pointerId !== clickPointerId) return
+  const wasTunnelDrag = tunnelDrag
+  tunnelDrag = false
+  canvas.style.cursor = 'default'
+  try {
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId)
+  } catch {
+    /* */
+  }
   clickPointerId = -1
+  if (wasTunnelDrag) return
+
   const dx = e.clientX - clickDownX
   const dy = e.clientY - clickDownY
   if (Math.hypot(dx, dy) > 10) return
@@ -411,11 +557,15 @@ canvas.addEventListener('pointerup', (e) => {
   if (!hit) return
   const mesh = hit.object
   if (mesh instanceof THREE.Mesh) {
+    hoveredMesh = null
+    cursorLabelFading = false
+    hideCursorLabel()
     scrollHint.classList.add('scroll-hint--hidden')
     beginGradientEnter()
     const article = meshArticleMap.get(mesh)
     if (article) {
       historyTray.push(article)
+      fetchLinkedExtract(article.title)
     }
     focusMeshOnScreen(mesh, () => {
       if (article) detailPanel.show(article)
@@ -514,37 +664,48 @@ syncMeshCount()
 /* ── Wikipedia prefill ───────────────────────────────────── */
 
 /**
- * Fetches all batches and waits for every texture to finish loading before
- * revealing the tunnel. Once ready, meshes appear with a staggered entrance
- * animation (closest to camera first).
+ * Prefills the article pool for frustum-visible meshes, waits only for those
+ * textures, then reveals the tunnel. Remaining meshes are filled in the
+ * background so the user sees content ~seconds earlier on slow connections.
  */
 async function loadWikiImagesProgressively(): Promise<void> {
-  const loadPromises: Promise<void>[] = []
-
   const visibleFirst = getInitiallyVisibleMeshes(camera, meshes)
+
+  setLoadingProgress(10)
+
   if (visibleFirst.length > 0) {
     await wikiPrefill(visibleFirst.length)
-    for (const mesh of visibleFirst) {
-      if (!meshArticleMap.has(mesh)) loadPromises.push(assignArticleToMesh(mesh))
+  }
+
+  setLoadingProgress(30)
+
+  let loaded = 0
+  const total = visibleFirst.length || 1
+  const visibleLoads: Promise<void>[] = []
+  for (const mesh of visibleFirst) {
+    if (!meshArticleMap.has(mesh)) {
+      visibleLoads.push(
+        assignArticleToMesh(mesh).then(() => {
+          loaded++
+          setLoadingProgress(30 + Math.round((loaded / total) * 60))
+        }),
+      )
     }
   }
 
-  const target = Math.round(imageDials.planeCount)
-  const batchSize = 20
-  const batchesNeeded = Math.ceil((target + 20) / (batchSize * 0.6))
-
-  for (let i = 0; i < batchesNeeded; i++) {
-    await wikiFetchBatch(batchSize)
-    for (const mesh of meshes) {
-      if (!meshArticleMap.has(mesh)) {
-        loadPromises.push(assignArticleToMesh(mesh))
-      }
-    }
-    if (meshes.every((m) => meshArticleMap.has(m))) break
-  }
-
-  await Promise.all(loadPromises)
+  await Promise.all(visibleLoads)
+  setLoadingProgress(100)
   playInitialEntrance()
+
+  const remaining = meshes.filter((m) => !meshArticleMap.has(m))
+  if (remaining.length > 0) {
+    const batchSize = 20
+    const batchesNeeded = Math.ceil((remaining.length + 10) / (batchSize * 0.6))
+    await wikiFetchBatchesParallel(batchesNeeded, batchSize)
+    for (const mesh of remaining) {
+      if (!meshArticleMap.has(mesh)) assignArticleToMesh(mesh)
+    }
+  }
 }
 
 function playInitialEntrance(): void {
@@ -613,13 +774,10 @@ async function reloadTunnelForFilter(): Promise<void> {
     const ENTER_DURATION = motionDials.tunnelSpawnDuration
     const STAGGER = 0.03
 
-    // Prefetch articles so they're pooled and ready before animation starts
     const target = Math.round(imageDials.planeCount)
     const batchSize = 20
     const batchesNeeded = Math.ceil((target + 20) / (batchSize * 0.6))
-    for (let i = 0; i < batchesNeeded; i++) {
-      await wikiFetchBatch(batchSize)
-    }
+    await wikiFetchBatchesParallel(batchesNeeded, batchSize)
 
     // Sort closest-to-camera first
     camera.getWorldPosition(scratchCamPos)
@@ -681,10 +839,18 @@ async function reloadTunnelForFilter(): Promise<void> {
   }
 }
 
-mountTopicFilter(document.getElementById('topic-filter-root')!, (query: string | null) => {
-  wikiSetFilter(query)
-  void reloadTunnelForFilter()
-})
+const scheduleFilterMount = () =>
+  import('./topic-filter-mount.tsx').then(({ mountTopicFilter }) => {
+    mountTopicFilter(document.getElementById('topic-filter-root')!, (query: string | null) => {
+      wikiSetFilter(query)
+      void reloadTunnelForFilter()
+    })
+  })
+if ('requestIdleCallback' in window) {
+  requestIdleCallback(() => void scheduleFilterMount())
+} else {
+  setTimeout(() => void scheduleFilterMount(), 200)
+}
 
 /* ── Tunnel loop ─────────────────────────────────────────── */
 
@@ -722,6 +888,14 @@ function tick() {
     Math.abs(scrollXVel) < motionDials.momentumCutoff
   ) {
     scrollXVel = 0
+  }
+
+  scrollYVel *= motionDials.momentumDecay
+  if (
+    motionDials.momentumCutoff > 0 &&
+    Math.abs(scrollYVel) < motionDials.momentumCutoff
+  ) {
+    scrollYVel = 0
   }
 
   const scrollingZ = Math.abs(scrollZVel) > 1e-6
@@ -775,6 +949,10 @@ function tick() {
 
   if (Math.abs(scrollXVel) > 1e-6) {
     camera.position.x += scrollXVel * dt
+  }
+
+  if (Math.abs(scrollYVel) > 1e-6) {
+    camera.position.y += scrollYVel * dt
   }
 
   camera.position.x = THREE.MathUtils.clamp(camera.position.x, -CAM_PAN_CLAMP, CAM_PAN_CLAMP)

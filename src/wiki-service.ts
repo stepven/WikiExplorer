@@ -10,6 +10,8 @@
 export interface WikiArticle {
   title: string
   extract: string
+  /** Populated lazily via fetchLinkedExtract; null until fetched. */
+  extractHtml: string | null
   pageUrl: string
   thumbUrl: string
   thumbW: number
@@ -19,7 +21,7 @@ export interface WikiArticle {
 const API_URL = 'https://en.wikipedia.org/w/api.php'
 
 const pool: WikiArticle[] = []
-let fetchInFlight = false
+let fetchesInFlight = 0
 let activeFilter: string | null = null
 
 export function setFilter(topic: string | null): void {
@@ -36,7 +38,7 @@ const SHARED_PROPS: Record<string, string> = {
   action: 'query',
   prop: 'pageimages|extracts|info',
   piprop: 'thumbnail',
-  pithumbsize: '400',
+  pithumbsize: '300',
   exintro: '1',
   explaintext: '1',
   exsentences: '2',
@@ -45,8 +47,102 @@ const SHARED_PROPS: Record<string, string> = {
   origin: '*',
 }
 
+const WIKI_ORIGIN = 'https://en.wikipedia.org'
+const ALLOWED_TAGS = new Set(['a', 'b', 'i', 'em', 'strong', 'sup', 'sub', 'span', 'p'])
+
+/**
+ * Sanitize parsed section HTML: keep only allowlisted inline/block tags,
+ * absolutize /wiki/ hrefs, strip citation footnotes, and add safe link attrs.
+ */
+function sanitizeParsedHtml(rawHtml: string): string {
+  const container = document.createElement('div')
+  container.innerHTML = rawHtml
+
+  // Remove citation references like [1], [2]
+  container.querySelectorAll('sup.reference').forEach((el) => el.remove())
+  // Remove reference lists, infoboxes, figures, tables, styles
+  container.querySelectorAll('.reflist, .references, .mw-references-wrap, .infobox, figure, table, style, .shortdescription, .mw-empty-elt').forEach((el) => el.remove())
+
+  const walk = (node: Node): void => {
+    const children = Array.from(node.childNodes)
+    for (const child of children) {
+      if (child.nodeType === Node.TEXT_NODE) continue
+      if (child.nodeType !== Node.ELEMENT_NODE) {
+        child.remove()
+        continue
+      }
+      const el = child as Element
+      if (!ALLOWED_TAGS.has(el.tagName.toLowerCase())) {
+        el.replaceWith(...Array.from(el.childNodes))
+        walk(node)
+        return
+      }
+      if (el.tagName === 'A') {
+        const href = el.getAttribute('href') ?? ''
+        if (href.startsWith('#')) {
+          // Anchor-only links (footnote back-refs etc.) — unwrap to plain text
+          el.replaceWith(...Array.from(el.childNodes))
+          walk(node)
+          return
+        }
+        if (href.startsWith('/wiki/')) {
+          el.setAttribute('href', `${WIKI_ORIGIN}${href}`)
+        } else if (href.startsWith('./')) {
+          el.setAttribute('href', `${WIKI_ORIGIN}/wiki/${href.slice(2)}`)
+        } else if (!href.startsWith('http')) {
+          el.removeAttribute('href')
+        }
+        el.setAttribute('target', '_blank')
+        el.setAttribute('rel', 'noopener noreferrer')
+      }
+      walk(el)
+    }
+  }
+
+  walk(container)
+  return container.innerHTML
+}
+
+const linkedExtractCache = new Map<string, Promise<string | null>>()
+
+/**
+ * Fetch the intro section of a Wikipedia article via action=parse,
+ * returning sanitized HTML with wikilinks intact.
+ * Results are cached so repeated views don't re-fetch.
+ */
+export function fetchLinkedExtract(title: string): Promise<string | null> {
+  const cached = linkedExtractCache.get(title)
+  if (cached) return cached
+
+  const promise = (async (): Promise<string | null> => {
+    try {
+      const params = new URLSearchParams({
+        action: 'parse',
+        page: title,
+        prop: 'text',
+        section: '0',
+        format: 'json',
+        origin: '*',
+      })
+      const resp = await fetch(`${API_URL}?${params}`)
+      if (!resp.ok) return null
+      const json = (await resp.json()) as {
+        parse?: { text?: { '*'?: string } }
+      }
+      const html = json?.parse?.text?.['*']
+      if (!html) return null
+      return sanitizeParsedHtml(html)
+    } catch {
+      return null
+    }
+  })()
+
+  linkedExtractCache.set(title, promise)
+  return promise
+}
+
 export async function fetchBatch(count = 20): Promise<void> {
-  fetchInFlight = true
+  fetchesInFlight++
   try {
     const generatorParams: Record<string, string> = activeFilter
       ? {
@@ -85,6 +181,7 @@ export async function fetchBatch(count = 20): Promise<void> {
       pool.push({
         title: page.title ?? '',
         extract: page.extract ?? '',
+        extractHtml: null,
         pageUrl:
           page.fullurl ??
           `https://en.wikipedia.org/wiki/${encodeURIComponent(page.title ?? '')}`,
@@ -96,7 +193,7 @@ export async function fetchBatch(count = 20): Promise<void> {
   } catch {
     /* network errors are non-fatal; pool stays as-is */
   } finally {
-    fetchInFlight = false
+    fetchesInFlight--
   }
 }
 
@@ -104,20 +201,35 @@ const LOW_WATER = 10
 
 /** Shift the next article off the pool. Triggers a background refill when pool is low. */
 export function next(): WikiArticle | null {
-  if (pool.length < LOW_WATER && !fetchInFlight) {
+  if (pool.length < LOW_WATER && fetchesInFlight === 0) {
     void fetchBatch()
   }
   return pool.shift() ?? null
+}
+
+/** Run `count` fetchBatch calls with bounded concurrency. */
+export async function fetchBatchesParallel(
+  count: number,
+  batchSize = 20,
+  concurrency = 3,
+): Promise<void> {
+  let started = 0
+  async function worker(): Promise<void> {
+    while (started < count) {
+      started++
+      await fetchBatch(batchSize)
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, count) }, () => worker()),
+  )
 }
 
 /** Pre-fill the pool with enough articles for `n` image slots. */
 export async function prefill(n: number): Promise<void> {
   const batchSize = 20
   const batchesNeeded = Math.ceil(n / (batchSize * 0.6))
-  for (let i = 0; i < batchesNeeded; i++) {
-    await fetchBatch(batchSize)
-    if (pool.length >= n) break
-  }
+  await fetchBatchesParallel(batchesNeeded, batchSize)
 }
 
 export function poolSize(): number {

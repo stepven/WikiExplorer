@@ -1,5 +1,9 @@
 import xIconSvg from '@phosphor-icons/core/assets/regular/x.svg?raw'
 import gsap from 'gsap'
+import { applyHistoryTrayHoverCssVars } from './history-tray-hover-dials'
+import { imageDials } from './image-dials'
+import { motionDials } from './motion-dials'
+import { tunnelSpawnEase } from './tunnel-spawn-ease'
 import type { WikiArticle } from './wiki-service'
 
 const MAX_STACK_VISIBLE = 5
@@ -187,6 +191,7 @@ export function createHistoryTray(portalRoot: HTMLElement): {
   }
 
   syncDialStyles()
+  applyHistoryTrayHoverCssVars(el)
 
   /* ── Helpers ───────────────────────────────────────────── */
 
@@ -194,27 +199,84 @@ export function createHistoryTray(portalRoot: HTMLElement): {
     badge.textContent = String(entries.length)
   }
 
-  function scatterTransform(depth: number): string {
-    const s = SCATTER[depth % SCATTER.length]
-    return `translate(${s[0]}px, ${s[1]}px) rotate(${s[2]}deg)`
+  /** Scatter is applied via CSS vars so hover can add lift/scale without clobbering transform. */
+  function thumbOpacityForDepth(depth: number): number {
+    return Math.max(0, 1 - depth * 0.12)
   }
 
-  function rebuildStack() {
-    stack.innerHTML = ''
-    const visible = entries.slice(0, MAX_STACK_VISIBLE)
+  function findThumbByUrl(url: string): HTMLImageElement | null {
+    for (const el of stack.querySelectorAll<HTMLImageElement>('.history-tray__thumb')) {
+      if (el.dataset.thumbUrl === url) return el
+    }
+    return null
+  }
 
-    for (let i = visible.length - 1; i >= 0; i--) {
-      const img = document.createElement('img')
-      img.className = 'history-tray__thumb'
-      img.src = visible[i].thumbUrl
-      img.alt = visible[i].title
-      img.draggable = false
-      img.dataset.depth = String(i)
-      img.style.transform = scatterTransform(i)
-      img.style.zIndex = String(MAX_STACK_VISIBLE - i)
-      const fade = Math.max(0, 1 - i * 0.12)
-      img.style.opacity = String(fade)
-      stack.appendChild(img)
+  function setThumbScatterVars(img: HTMLImageElement, depth: number) {
+    const s = SCATTER[depth % SCATTER.length]
+    img.style.setProperty('--ht-sx', `${s[0]}px`)
+    img.style.setProperty('--ht-sy', `${s[1]}px`)
+    img.style.setProperty('--ht-sr', `${s[2]}deg`)
+    img.dataset.depth = String(depth)
+    img.style.opacity = String(thumbOpacityForDepth(depth))
+    img.style.zIndex = String(MAX_STACK_VISIBLE - depth)
+  }
+
+  /**
+   * Updates the mini-stack without wiping innerHTML so existing thumbnails keep their nodes.
+   * Changing depth reassigns scatter vars; CSS transitions animate position/rotation/opacity.
+   */
+  function syncMiniStack() {
+    const visible = entries.slice(0, MAX_STACK_VISIBLE)
+    const keep = new Set(visible.map((e) => e.thumbUrl))
+
+    for (const img of [...stack.querySelectorAll<HTMLImageElement>('.history-tray__thumb')]) {
+      const id = img.dataset.thumbUrl
+      if (id && !keep.has(id)) {
+        gsap.killTweensOf(img)
+        gsap.to(img, {
+          opacity: 0,
+          duration: 0.22,
+          ease: 'power2.in',
+          onComplete: () => img.remove(),
+        })
+      }
+    }
+
+    for (let depth = 0; depth < visible.length; depth++) {
+      const entry = visible[depth]!
+      let img = findThumbByUrl(entry.thumbUrl)
+      let isNew = false
+      if (!img) {
+        isNew = true
+        img = document.createElement('img')
+        img.className = 'history-tray__thumb'
+        img.src = entry.thumbUrl
+        img.draggable = false
+        img.dataset.thumbUrl = entry.thumbUrl
+        stack.appendChild(img)
+      }
+      img.alt = entry.title
+
+      if (isNew && depth === 0) {
+        const s = SCATTER[0]
+        img.style.setProperty('--ht-sx', `${s[0]}px`)
+        img.style.setProperty('--ht-sy', `${s[1]}px`)
+        img.style.setProperty('--ht-sr', `${s[2]}deg`)
+        img.dataset.depth = '0'
+        img.style.zIndex = String(MAX_STACK_VISIBLE)
+        gsap.fromTo(
+          img,
+          { opacity: 0, '--ht-scale': 0.82 },
+          {
+            opacity: thumbOpacityForDepth(0),
+            '--ht-scale': 1,
+            duration: 0.3,
+            ease: 'power2.out',
+          },
+        )
+      } else {
+        setThumbScatterVars(img, depth)
+      }
     }
   }
 
@@ -360,7 +422,51 @@ export function createHistoryTray(portalRoot: HTMLElement): {
     pauseOrbitTicker()
   }
 
+  /**
+   * Same entrance as the tunnel (`main.ts` playInitialEntrance / recycle): scale from ~0,
+   * slide up from below, fade in — applied to each orbit `img` so we do not fight the
+   * orbit item’s per-frame `transform`.
+   */
+  function playOrbitEntrance() {
+    const imgs = orbitStage.querySelectorAll<HTMLImageElement>('.history-tray__orbit-item-inner img')
+    if (imgs.length === 0) return
+
+    const STAGGER = 0.03
+    const d = motionDials.tunnelSpawnDuration
+    /** Tunnel uses world units; map to a similar screen offset for the tray */
+    const yOffsetPx = motionDials.tunnelSpawnYOffset * 12
+    /** Extra “into focus” on top of scale / slide / opacity (matches tunnel timing) */
+    const blurInPx = 14
+
+    imgs.forEach((img, i) => {
+      gsap.killTweensOf(img)
+      gsap.set(img, { transformOrigin: '50% 50%' })
+      const delay = i * STAGGER
+      gsap.fromTo(
+        img,
+        {
+          scale: 0.001,
+          y: yOffsetPx,
+          opacity: 0,
+          filter: `blur(${blurInPx}px)`,
+        },
+        {
+          scale: 1,
+          y: 0,
+          opacity: imageDials.planeOpacity,
+          filter: 'blur(0px)',
+          duration: d,
+          ease: tunnelSpawnEase,
+          delay,
+        },
+      )
+    })
+  }
+
   /* ── Expand / Collapse ─────────────────────────────────── */
+
+  const FS_OVERLAY_FADE_IN = 0.28
+  const FS_OVERLAY_FADE_OUT = 0.52
 
   function expand() {
     if (expanded || entries.length === 0) return
@@ -372,20 +478,30 @@ export function createHistoryTray(portalRoot: HTMLElement): {
     recomputeOrbitLayout()
     applyOrbitPositions()
     startOrbit()
-    gsap.fromTo(fsContent, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power2.out' })
+    gsap.killTweensOf([fsContent, fsBackdrop])
+    gsap.set([fsBackdrop, fsContent], { opacity: 0 })
+    gsap.to([fsBackdrop, fsContent], {
+      opacity: 1,
+      duration: FS_OVERLAY_FADE_IN,
+      ease: 'power2.out',
+    })
+    playOrbitEntrance()
   }
 
   function collapse() {
     if (!expanded) return
     hideDetail()
     stopOrbit()
-    gsap.to(fsContent, {
+    gsap.killTweensOf(orbitStage.querySelectorAll('.history-tray__orbit-item-inner img'))
+    gsap.killTweensOf([fsContent, fsBackdrop])
+    gsap.to([fsBackdrop, fsContent], {
       opacity: 0,
-      duration: 0.2,
-      ease: 'power2.in',
+      duration: FS_OVERLAY_FADE_OUT,
+      ease: 'power2.inOut',
       onComplete: () => {
         fullscreen.hidden = true
         fsBackdrop.hidden = true
+        gsap.set([fsBackdrop, fsContent], { clearProps: 'opacity' })
         el.classList.remove('history-tray--expanded')
         expanded = false
       },
@@ -447,7 +563,7 @@ export function createHistoryTray(portalRoot: HTMLElement): {
         entries[0].pageUrl !== article.pageUrl
       ) {
         entries[0] = article
-        rebuildStack()
+        syncMiniStack()
       }
       return
     }
@@ -457,18 +573,7 @@ export function createHistoryTray(portalRoot: HTMLElement): {
     entries.unshift(article)
     el.hidden = false
     updateBadge()
-    rebuildStack()
-
-    const topImg = stack.querySelector<HTMLImageElement>('.history-tray__thumb[data-depth="0"]')
-    if (topImg) {
-      const target = scatterTransform(0)
-      gsap.fromTo(
-        topImg,
-        { scale: 0.8, opacity: 0 },
-        { scale: 1, opacity: 1, duration: 0.3, ease: 'power2.out', clearProps: 'scale' },
-      )
-      topImg.style.transform = target
-    }
+    syncMiniStack()
   }
 
   return {

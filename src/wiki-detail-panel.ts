@@ -1,5 +1,5 @@
 import xIconSvg from '@phosphor-icons/core/assets/regular/x.svg?raw'
-import type { WikiArticle } from './wiki-service'
+import { fetchLinkedExtract, type WikiArticle } from './wiki-service'
 
 /**
  * Lightweight HTML overlay that shows article title, extract, and a Wikipedia link.
@@ -25,7 +25,7 @@ export function createDetailPanel(opts?: {
     </button>
     <div class="wiki-detail__card">
       <h2 class="wiki-detail__title"></h2>
-      <p class="wiki-detail__extract"></p>
+      <div class="wiki-detail__extract"></div>
       <a class="wiki-detail__link" target="_blank" rel="noopener noreferrer">Read on Wikipedia <span class="wiki-detail__link-arrow" aria-hidden="true">&rarr;</span></a>
     </div>
   `
@@ -50,11 +50,30 @@ export function createDetailPanel(opts?: {
     hideImmediate()
   }
 
+  let activeTitle = ''
+
   function show(article: WikiArticle) {
+    activeTitle = article.title
     titleEl.textContent = article.title
-    extractEl.textContent = article.extract || 'No summary available.'
     linkEl.href = article.pageUrl
-    el.hidden = false
+
+    if (article.extractHtml) {
+      extractEl.innerHTML = article.extractHtml
+      el.hidden = false
+    } else {
+      extractEl.textContent = ''
+      el.hidden = false
+      const pending = fetchLinkedExtract(article.title)
+      pending.then((html) => {
+        if (activeTitle !== article.title) return
+        if (html) {
+          article.extractHtml = html
+          extractEl.innerHTML = html
+        } else {
+          extractEl.textContent = article.extract || 'No summary available.'
+        }
+      })
+    }
   }
 
   closeBtn.addEventListener('click', requestClose)

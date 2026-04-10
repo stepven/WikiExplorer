@@ -368,22 +368,9 @@ body {
   color: var(--text);
 }
 
-.loading-indicator__status {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin: 0.4rem 0 0;
-  font-size: 0.88rem;
-  font-weight: 400;
-  color: var(--app-muted);
-}
-
-.loading-indicator__spinner {
-  animation: spin 1.5s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.loading-indicator__progress {
+  margin-top: 0.75rem;
+  width: 12rem;
 }
 
 /* ── Topic filter mount ──────────────────────────────────── */
@@ -468,6 +455,27 @@ body {
 
 .scroll-hint--hidden {
   opacity: 0;
+}
+
+/* ── Tunnel cursor label (hover tooltip) ─────────────────── */
+
+#tunnel-cursor-label {
+  position: fixed;
+  pointer-events: none;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 450;
+  padding: 5px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+#tunnel-cursor-label.visible {
+  opacity: 1;
 }
 
 /* ── Wiki detail overlay ─────────────────────────────────── */
@@ -572,10 +580,32 @@ body {
   /* Cap height so long summaries never grow into the focused image above */
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 6;
-  line-clamp: 6;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
   overflow: hidden;
   overflow-wrap: anywhere;
+}
+
+.wiki-detail__extract a {
+  color: var(--text);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--app-accent-dim);
+  text-underline-offset: 2px;
+  transition: text-decoration-color 0.15s ease;
+}
+
+.wiki-detail__extract a:hover {
+  text-decoration-color: var(--app-accent);
+}
+
+.wiki-detail__extract a:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.wiki-detail__extract p {
+  margin: 0;
 }
 
 .wiki-detail__link {
@@ -657,6 +687,12 @@ body {
 }
 
 .history-tray__thumb {
+  --ht-sx: 0px;
+  --ht-sy: 0px;
+  --ht-sr: 0deg;
+  --ht-scale: 1;
+  --ht-lift: 0px;
+  --ht-push: 1;
   position: absolute;
   width: 64px;
   height: 52px;
@@ -667,9 +703,52 @@ body {
   object-fit: cover;
   border-radius: 4px;
   border: 2px solid #fff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
   pointer-events: none;
   transform-origin: center center;
+  transform: translate(var(--ht-sx), calc(var(--ht-sy) - var(--ht-lift))) rotate(var(--ht-sr))
+    scale(calc(var(--ht-scale) * var(--ht-push)));
+  transition:
+    transform
+      var(--ht-hover-trans-dur, 0.3s)
+      var(--ht-hover-trans-ease, cubic-bezier(0.3, 1.1, 0.5, 1)),
+    opacity
+      var(--ht-hover-trans-dur, 0.3s)
+      var(--ht-hover-trans-ease, cubic-bezier(0.3, 1.1, 0.5, 1)),
+    box-shadow var(--ht-hover-shadow-dur, 0.3s) ease;
+}
+
+/* Collapsed tray: lift the pile slightly so it feels tappable (vars from history-tray-hover-dials) */
+.history-tray:not(.history-tray--expanded):hover .history-tray__thumb {
+  --ht-lift: var(--ht-hover-lift-all, 11px);
+  --ht-push: var(--ht-hover-push-all, 1.06);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.09);
+}
+
+.history-tray:not(.history-tray--expanded):hover .history-tray__thumb[data-depth='0'] {
+  --ht-lift: var(--ht-hover-lift-0, 11.5px);
+  --ht-push: var(--ht-hover-push-0, 1.07);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.1);
+}
+
+.history-tray:not(.history-tray--expanded):hover .history-tray__thumb[data-depth='1'] {
+  --ht-lift: var(--ht-hover-lift-1, 9px);
+  --ht-push: var(--ht-hover-push-1, 1.12);
+}
+
+.history-tray:not(.history-tray--expanded):hover .history-tray__thumb[data-depth='2'] {
+  --ht-lift: var(--ht-hover-lift-2, 8.5px);
+  --ht-push: var(--ht-hover-push-2, 1.085);
+}
+
+.history-tray:not(.history-tray--expanded):hover .history-tray__thumb[data-depth='3'] {
+  --ht-lift: var(--ht-hover-lift-3, 5.5px);
+  --ht-push: var(--ht-hover-push-3, 1.12);
+}
+
+.history-tray:not(.history-tray--expanded):hover .history-tray__thumb[data-depth='4'] {
+  --ht-lift: var(--ht-hover-lift-4, 5.5px);
+  --ht-push: var(--ht-hover-push-4, 1.12);
 }
 
 .history-tray__badge {
@@ -874,4 +953,38 @@ body {
 .history-tray__caption-bar .wiki-detail__link {
   pointer-events: auto;
   width: auto;
+}
+
+/* Standalone lab: history-tray-lab.html */
+.tray-lab {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  text-align: center;
+  max-width: min(28rem, calc(100vw - 2rem));
+  line-height: 1.45;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.tray-lab__title {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.tray-lab__hint {
+  margin: 0;
+  color: var(--app-muted);
+}
+
+.tray-lab__nav {
+  margin: 0.6rem 0 0;
+}
+
+.tray-lab a {
+  color: var(--app-accent);
 }

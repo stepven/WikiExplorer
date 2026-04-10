@@ -20,6 +20,13 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         sphere: resolve(__dirname, 'sphere.html'),
+        historyTrayLab: resolve(__dirname, 'history-tray-lab.html'),
+      },
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/three/')) return 'three'
+          if (id.includes('node_modules/react-dom/') || id.includes('node_modules/react/')) return 'react'
+        },
       },
     },
   },
