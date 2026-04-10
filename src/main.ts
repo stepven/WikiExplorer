@@ -9,11 +9,12 @@ import { imageDials } from './image-dials'
 import { gradientDials } from './gradient-dials'
 
 import {
+  ensurePool,
   fetchBatchesParallel as wikiFetchBatchesParallel,
   fetchLinkedExtract,
-  next as wikiNext,
   prefill as wikiPrefill,
   setFilter as wikiSetFilter,
+  takeNext,
   type WikiArticle,
 } from './wiki-service'
 import { createDetailPanel } from './wiki-detail-panel'
@@ -192,11 +193,21 @@ function loadWikiTexture(mesh: THREE.Mesh, article: WikiArticle): Promise<void> 
   })
 }
 
+const meshAssignInFlight = new WeakSet<THREE.Mesh>()
+
 function assignArticleToMesh(mesh: THREE.Mesh): Promise<void> {
-  const article = wikiNext()
-  if (!article) return Promise.resolve()
-  meshArticleMap.set(mesh, article)
-  return loadWikiTexture(mesh, article)
+  if (meshAssignInFlight.has(mesh)) return Promise.resolve()
+  meshAssignInFlight.add(mesh)
+  return (async () => {
+    try {
+      const article = await takeNext()
+      if (!article) return
+      meshArticleMap.set(mesh, article)
+      await loadWikiTexture(mesh, article)
+    } finally {
+      meshAssignInFlight.delete(mesh)
+    }
+  })()
 }
 
 let initialLoadComplete = false
@@ -239,6 +250,16 @@ function getInitiallyVisibleMeshes(
     return da - db
   })
   return visible
+}
+
+/** Kick loads for planes that scroll into view but never received an article (pool starvation). */
+function prioritizeFrustumMeshLoads(): void {
+  const visible = getInitiallyVisibleMeshes(camera, meshes)
+  for (const mesh of visible) {
+    if (!meshArticleMap.has(mesh)) {
+      assignArticleToMesh(mesh)
+    }
+  }
 }
 
 /* ── Scroll state ────────────────────────────────────────── */
@@ -702,6 +723,7 @@ async function loadWikiImagesProgressively(): Promise<void> {
     const batchSize = 20
     const batchesNeeded = Math.ceil((remaining.length + 10) / (batchSize * 0.6))
     await wikiFetchBatchesParallel(batchesNeeded, batchSize)
+    await ensurePool(remaining.length)
     for (const mesh of remaining) {
       if (!meshArticleMap.has(mesh)) assignArticleToMesh(mesh)
     }
@@ -778,6 +800,7 @@ async function reloadTunnelForFilter(): Promise<void> {
     const batchSize = 20
     const batchesNeeded = Math.ceil((target + 20) / (batchSize * 0.6))
     await wikiFetchBatchesParallel(batchesNeeded, batchSize)
+    await ensurePool(target)
 
     // Sort closest-to-camera first
     camera.getWorldPosition(scratchCamPos)
@@ -942,9 +965,15 @@ function tick() {
           ease: tunnelSpawnEase,
         })
 
+        meshArticleMap.delete(mesh)
+        meshAspectMap.delete(mesh)
         assignArticleToMesh(mesh)
       }
     }
+  }
+
+  if (initialLoadComplete) {
+    prioritizeFrustumMeshLoads()
   }
 
   if (Math.abs(scrollXVel) > 1e-6) {

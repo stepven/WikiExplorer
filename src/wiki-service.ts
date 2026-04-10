@@ -207,6 +207,32 @@ export function next(): WikiArticle | null {
   return pool.shift() ?? null
 }
 
+/**
+ * Block until the pool has at least `minCount` articles, or batch attempts give up.
+ * Use before assigning many meshes at once so parallel `next()` calls do not drain
+ * the pool to zero while a refill is still in flight (which would return null).
+ */
+export async function ensurePool(minCount: number): Promise<void> {
+  let attempts = 0
+  const maxAttempts = 80
+  while (pool.length < minCount && attempts < maxAttempts) {
+    attempts++
+    await fetchBatch(20)
+  }
+}
+
+/**
+ * Next article from the pool, waiting for a refill if it was empty.
+ * Prefer this over `next()` when assignment must not silently no-op.
+ */
+export async function takeNext(): Promise<WikiArticle | null> {
+  let article = next()
+  if (article) return article
+  await ensurePool(1)
+  article = next()
+  return article ?? null
+}
+
 /** Run `count` fetchBatch calls with bounded concurrency. */
 export async function fetchBatchesParallel(
   count: number,
