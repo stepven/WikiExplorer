@@ -249,15 +249,27 @@ function loadWikiTexture(mesh: Mesh, article: WikiArticle): Promise<boolean> {
 
 const meshAssignInFlight = new WeakSet<Mesh>()
 
+/** Pull articles until a thumbnail decodes successfully (same strategy as initial tunnel fill). */
 function assignArticleToMesh(mesh: Mesh): Promise<void> {
   if (meshAssignInFlight.has(mesh)) return Promise.resolve()
   meshAssignInFlight.add(mesh)
   return (async () => {
     try {
-      const article = await takeNext()
-      if (!article) return
-      meshArticleMap.set(mesh, article)
-      await loadWikiTexture(mesh, article)
+      let articleAttempts = 0
+      const maxArticles = 80
+      while (articleAttempts < maxArticles) {
+        const article = await takeNext()
+        if (!article) {
+          await fetchBatch(20)
+          articleAttempts++
+          continue
+        }
+        meshArticleMap.set(mesh, article)
+        const ok = await loadWikiTexture(mesh, article)
+        if (ok) return
+        meshArticleMap.delete(mesh)
+        articleAttempts++
+      }
     } finally {
       meshAssignInFlight.delete(mesh)
     }
@@ -670,6 +682,14 @@ function makeImageTexture(_seed: number): CanvasTexture {
   return tex
 }
 
+/** Drop the current thumbnail so recycled planes never flash the previous article while loading. */
+function stripMeshToPlaceholder(mesh: Mesh): void {
+  const mat = mesh.material as MeshBasicMaterial
+  mat.map?.dispose()
+  mat.map = makeImageTexture(0)
+  mat.needsUpdate = true
+}
+
 /* ── Mesh pool ───────────────────────────────────────────── */
 
 let sharedPlaneGeometry: PlaneGeometry | null = null
@@ -761,32 +781,13 @@ async function loadWikiImagesProgressively(): Promise<void> {
 
   setLoadingProgress(20)
 
-  /** Keep trying articles until this mesh has a real, drawable thumbnail. */
-  async function loadMeshUntilTextureOk(mesh: Mesh): Promise<void> {
-    let articleAttempts = 0
-    const maxArticles = 80
-    while (articleAttempts < maxArticles) {
-      let article = await takeNext()
-      if (!article) {
-        await fetchBatch(20)
-        articleAttempts++
-        continue
-      }
-      meshArticleMap.set(mesh, article)
-      const ok = await loadWikiTexture(mesh, article)
-      if (ok) return
-      meshArticleMap.delete(mesh)
-      articleAttempts++
-    }
-  }
-
   const CONCURRENCY = 5
   let nextIndex = 0
   async function worker(): Promise<void> {
     while (true) {
       const i = nextIndex++
       if (i >= allMeshes.length) return
-      await loadMeshUntilTextureOk(allMeshes[i])
+      await assignArticleToMesh(allMeshes[i])
       loaded++
       setLoadingProgress(20 + Math.round((loaded / total) * 70))
     }
@@ -1020,6 +1021,10 @@ function tick() {
         const mat = mesh.material as MeshBasicMaterial
         mat.opacity = 0
 
+        meshArticleMap.delete(mesh)
+        meshAspectMap.delete(mesh)
+        stripMeshToPlaceholder(mesh)
+
         const d = motionDials.tunnelSpawnDuration
         gsap.to(mesh.position, { y: targetY, duration: d, ease: tunnelSpawnEase })
         gsap.to(mesh.scale, {
@@ -1029,15 +1034,14 @@ function tick() {
           duration: d,
           ease: tunnelSpawnEase,
         })
-        gsap.to(mat, {
-          opacity: imageDials.planeOpacity,
-          duration: d,
-          ease: tunnelSpawnEase,
-        })
 
-        meshArticleMap.delete(mesh)
-        meshAspectMap.delete(mesh)
-        assignArticleToMesh(mesh)
+        void assignArticleToMesh(mesh).then(() => {
+          gsap.to(mat, {
+            opacity: imageDials.planeOpacity,
+            duration: d,
+            ease: tunnelSpawnEase,
+          })
+        })
       }
     }
   }
